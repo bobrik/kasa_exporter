@@ -1,5 +1,8 @@
 use std::net;
 
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use futures::future::Future;
 use futures::stream::iter_ok;
 use futures::stream::Stream;
@@ -61,60 +64,66 @@ fn main() {
     let password = matches.value_of("kasa.password").unwrap().to_string();
 
     hyper::rt::run(
-        Server::bind(
-            &matches
-                .value_of("web.listen-address")
-                .unwrap()
-                .parse()
-                .unwrap(),
-        )
-        .serve(move || service_fn(authorized_service(username.clone(), password.clone())))
-        .map_err(|e| eprintln!("server error: {}", e)),
+        kasa::Kasa::new(clap::crate_name!().to_string(), username, password).and_then(move |c| {
+            let client = Arc::new(Mutex::new(c));
+
+            Server::bind(
+                &matches
+                    .value_of("web.listen-address")
+                    .unwrap()
+                    .parse()
+                    .unwrap(),
+            )
+            .serve(move || service_fn(service(client.clone())))
+            .map_err(|e| eprintln!("server error: {}", e))
+        }),
     );
 }
 
-fn authorized_service(
-    username: String,
-    password: String,
+fn service(
+    client: Arc<Mutex<kasa::Kasa>>,
 ) -> impl Fn(Request<Body>) -> Box<Future<Item = Response<Body>, Error = hyper::Error> + Send> {
     move |_| {
-        Box::new(
-            kasa::Kasa::new(
-                clap::crate_name!().to_string(),
-                username.clone(),
-                password.clone(),
-            )
-            .and_then(|client| client.get_device_list().map(|r| (client, r)))
-            .and_then(|(client, devices)| {
-                iter_ok::<_, ()>(devices.result.unwrap().device_list.into_iter())
-                    .and_then(move |device| {
-                        client
-                            .emeter(&device.device_id)
-                            .map(|emeter| (device, emeter))
-                    })
-                    .collect()
-            })
-            .and_then(
-                |emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>| {
-                    let encoder = TextEncoder::new();
+        Box::new({
+            // This is ugly
+            let inner_client = Arc::clone(&client);
 
-                    let mut buffer = vec![];
-                    encoder
-                        .encode(&registry(emeters).gather(), &mut buffer)
-                        .unwrap();
+            client
+                .lock()
+                .unwrap()
+                .get_device_list()
+                .and_then(|devices| {
+                    iter_ok::<_, ()>(devices.result.unwrap().device_list.into_iter())
+                        .and_then(move |device| {
+                            inner_client
+                                .lock()
+                                .unwrap()
+                                .emeter(&device.device_id)
+                                .map(|emeter| (device, emeter))
+                        })
+                        .collect()
+                })
+                .and_then(
+                    |emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>| {
+                        let encoder = TextEncoder::new();
 
-                    let mut res = Response::new(Body::from(buffer));
+                        let mut buffer = vec![];
+                        encoder
+                            .encode(&registry(emeters).gather(), &mut buffer)
+                            .unwrap();
 
-                    res.headers_mut().insert(
-                        hyper::header::CONTENT_TYPE,
-                        encoder.format_type().parse().unwrap(),
-                    );
+                        let mut res = Response::new(Body::from(buffer));
 
-                    Ok(res)
-                },
-            )
-            .or_else(|_| Ok(Response::new(Body::empty()))),
-        )
+                        res.headers_mut().insert(
+                            hyper::header::CONTENT_TYPE,
+                            encoder.format_type().parse().unwrap(),
+                        );
+
+                        Ok(res)
+                    },
+                )
+                .or_else(|_| Ok(Response::new(Body::empty())))
+        })
     }
 }
 
