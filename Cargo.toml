@@ -1,0 +1,20 @@
+[package]
+name = "kasa_exporter"
+version = "0.1.0"
+authors = ["Ivan Babrou <hello@ivan.computer>"]
+edition = "2018"
+
+[features]
+default = []
+kasa_debug = []
+
+[dependencies]
+clap = "2"
+futures = "0.1"
+hyper = "0.12"
+hyper-tls = "0.3"
+serde = "1.0"
+serde_json = "1.0"
+serde_derive = "1.0"
+prometheus = "0.4"
+uuid = { version = "0.7", features = ["v4"] }
