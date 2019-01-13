@@ -7,6 +7,8 @@ use futures::future::Future;
 use futures::stream::iter_ok;
 use futures::stream::Stream;
 
+use tokio;
+
 use hyper::service::service_fn;
 use hyper::Body;
 use hyper::Request;
@@ -63,7 +65,7 @@ fn main() {
     let username = matches.value_of("kasa.username").unwrap().to_string();
     let password = matches.value_of("kasa.password").unwrap().to_string();
 
-    hyper::rt::run(
+    tokio::run(
         kasa::Kasa::new(clap::crate_name!().to_string(), username, password).and_then(move |c| {
             let client = Arc::new(Mutex::new(c));
 
