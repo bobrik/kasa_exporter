@@ -3,8 +3,9 @@ use std::net;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use futures::future;
 use futures::future::Future;
-use futures::stream::iter_ok;
+use futures::stream;
 use futures::stream::Stream;
 
 use tokio;
@@ -14,6 +15,8 @@ use hyper::Body;
 use hyper::Request;
 use hyper::Response;
 use hyper::Server;
+
+use http;
 
 use serde;
 use serde_derive;
@@ -66,19 +69,21 @@ fn main() {
     let password = matches.value_of("kasa.password").unwrap().to_string();
 
     tokio::run(
-        kasa::Kasa::new(clap::crate_name!().to_string(), username, password).and_then(move |c| {
-            let client = Arc::new(Mutex::new(c));
+        kasa::Kasa::new(clap::crate_name!().to_string(), username, password)
+            .map_err(|e| eprintln!("kasa authentication error: {}", e))
+            .and_then(move |c| {
+                let client = Arc::new(Mutex::new(c));
 
-            Server::bind(
-                &matches
-                    .value_of("web.listen-address")
-                    .unwrap()
-                    .parse()
-                    .unwrap(),
-            )
-            .serve(move || service_fn(service(client.clone())))
-            .map_err(|e| eprintln!("server error: {}", e))
-        }),
+                Server::bind(
+                    &matches
+                        .value_of("web.listen-address")
+                        .unwrap()
+                        .parse()
+                        .unwrap(),
+                )
+                .serve(move || service_fn(service(client.clone())))
+                .map_err(|e| eprintln!("server error: {}", e))
+            }),
     );
 }
 
@@ -94,16 +99,19 @@ fn service(
                 .lock()
                 .unwrap()
                 .get_device_list()
-                .and_then(|devices| {
-                    iter_ok::<_, ()>(devices.result.unwrap().device_list.into_iter())
-                        .and_then(move |device| {
-                            inner_client
-                                .lock()
-                                .unwrap()
-                                .emeter(&device.device_id)
-                                .map(|emeter| (device, emeter))
-                        })
-                        .collect()
+                .and_then(|devices| match devices.result {
+                    Some(devices) => future::Either::A(
+                        stream::iter_ok(devices.device_list.into_iter())
+                            .and_then(move |device| {
+                                inner_client
+                                    .lock()
+                                    .unwrap()
+                                    .emeter(&device.device_id)
+                                    .map(|emeter| (device, emeter))
+                            })
+                            .collect(),
+                    ),
+                    None => future::Either::B(future::ok(vec![])),
                 })
                 .and_then(
                     |emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>| {
@@ -114,14 +122,27 @@ fn service(
                             .encode(&registry(emeters).gather(), &mut buffer)
                             .unwrap();
 
-                        let mut res = Response::new(Body::from(buffer));
+                        let mut http_response = Response::new(Body::from(buffer));
 
-                        res.headers_mut().insert(
-                            hyper::header::CONTENT_TYPE,
-                            encoder.format_type().parse().unwrap(),
-                        );
+                        let content_type = match encoder.format_type().parse() {
+                            Ok(content_type) => content_type,
+                            Err(e) => {
+                                return {
+                                    eprintln!("error formatting content type: {}", e);
 
-                        Ok(res)
+                                    let mut http_response = Response::new(Body::empty());
+                                    *http_response.status_mut() =
+                                        http::StatusCode::INTERNAL_SERVER_ERROR;
+
+                                    Ok(http_response)
+                                }
+                            }
+                        };
+
+                        http_response.headers_mut()
+                            .insert(hyper::header::CONTENT_TYPE, content_type);
+
+                        Ok(http_response)
                     },
                 )
                 .or_else(|_| Ok(Response::new(Body::empty())))
@@ -129,6 +150,15 @@ fn service(
     }
 }
 
+macro_rules! fill_metric {
+    ( labels = $labels:expr, $($metric:expr => $value:expr,)+ ) => {
+        $(
+            if let Some(value) = $value {
+                $metric.with($labels).set(value);
+            }
+        )+
+    }
+}
 fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> Registry {
     let voltage = gauge_vec(
         "device_voltage",
@@ -153,16 +183,21 @@ fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> Regist
     }
 
     for (device, emeter) in emeters {
-        let realtime = emeter.get_realtime.unwrap();
+        let realtime = match emeter.get_realtime {
+            Some(realtime) => realtime,
+            None => continue,
+        };
 
         let labels = &prometheus::labels! {
                 "device_alias" => device.alias.as_str(),
                 "device_id"    => device.device_id.as_str(),
         };
 
-        voltage.with(labels).set(realtime.voltage.unwrap());
-        current.with(labels).set(realtime.current.unwrap());
-        power.with(labels).set(realtime.power.unwrap());
+        fill_metric! { labels = labels,
+            voltage => realtime.voltage,
+            current => realtime.current,
+            power   => realtime.power,
+        };
     }
 
     registry
