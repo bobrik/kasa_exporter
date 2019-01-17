@@ -18,10 +18,6 @@ use hyper::Server;
 
 use http;
 
-use serde;
-use serde_derive;
-use serde_json;
-
 use prometheus;
 use prometheus::Encoder;
 use prometheus::GaugeVec;
