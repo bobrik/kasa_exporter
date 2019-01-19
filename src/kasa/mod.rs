@@ -1,3 +1,4 @@
+use std::error::Error as StdError;
 use std::fmt;
 
 use futures::future;
@@ -30,9 +31,9 @@ impl Kasa {
         app: String,
         username: String,
         password: String,
-    ) -> impl Future<Item = Kasa, Error = crate::kasa::error::Error> {
+    ) -> impl Future<Item = Kasa, Error = Error> {
         let client = match Self::client() {
-            Err(e) => return future::Either::A(future::err(e.chain_err(|| "error creating client"))),
+            Err(e) => return future::Either::A(future::err(e)),
             Ok(client) => client,
         };
 
@@ -52,33 +53,35 @@ impl Kasa {
                         token: result.token,
                     })
                 } else {
-                    future::err("auth response is empty".into())
+                    future::err(
+                        ErrorKind::EmptyAuthResponse(
+                            auth_response.error_code,
+                            auth_response.message.unwrap_or("".to_string()),
+                        )
+                        .into(),
+                    )
                 }
             }),
         )
     }
 
     fn client() -> Result<Client<HttpsConnector<HttpConnector>>> {
-        Ok(Client::builder().build::<_, Body>(
-            HttpsConnector::new(4).chain_err(|| "unable to create http connector")?,
-        ))
+        Ok(Client::builder().build::<_, Body>(HttpsConnector::new(4)?))
     }
 
     fn query<Q, R>(
         client: &Client<HttpsConnector<HttpConnector>>,
         token: Option<&String>,
         request: KasaRequest<Q>,
-    ) -> impl Future<Item = KasaResponse<R>, Error = crate::kasa::error::Error>
+    ) -> impl Future<Item = KasaResponse<R>, Error = Error>
     where
         Q: serde::ser::Serialize + std::fmt::Debug,
         R: serde::de::DeserializeOwned + std::fmt::Debug,
     {
-        let request_body = match serde_json::to_string(&request) {
-            Err(e) => {
-                return future::Either::A(future::err(
-                    format!("error serializing request body: {:}", e).into(),
-                ))
-            }
+        let request_body = match serde_json::to_string(&request)
+            .map_err(|e| Error::with_chain(e, ErrorKind::Serialization(format!("{:?}", request))))
+        {
+            Err(e) => return future::Either::A(future::err(e)),
             Ok(request_body) => request_body,
         };
 
@@ -89,12 +92,8 @@ impl Kasa {
             uri = uri + &"?token=".to_string() + &value
         }
 
-        let request_uri = match uri.parse() {
-            Err(e) => {
-                return future::Either::A(future::err(
-                    format!("error parsing request uri: {:}", e).into(),
-                ))
-            }
+        let request_uri = match uri.parse().map_err(From::from) {
+            Err(e) => return future::Either::A(future::err(e)),
             Ok(request_uri) => request_uri,
         };
 
@@ -113,12 +112,19 @@ impl Kasa {
         future::Either::B(
             client
                 .request(http_request)
-                .then(|r| r.chain_err(|| "error sending request to kasa api"))
+                .from_err::<Error>()
                 .and_then(|http_response| http_response.into_body().concat2().from_err())
-                .then(|r| r.chain_err(|| "error receiving response from kasa api"))
                 .and_then(|body| {
-                    serde_json::from_slice(&body.to_vec())
-                        .chain_err(|| "error parsing kasa api response")
+                    let body_vec = body.to_vec();
+                    serde_json::from_slice(&body_vec).map_err(|e| {
+                        Error::with_chain(
+                            e,
+                            ErrorKind::Serialization(
+                                String::from_utf8(body_vec)
+                                    .unwrap_or_else(|e| e.description().to_string()),
+                            ),
+                        )
+                    })
                 })
                 .map(|resp| {
                     if cfg!(feature = "kasa_debug") {
@@ -132,7 +138,7 @@ impl Kasa {
     fn token_query<Q, R>(
         &self,
         req: KasaRequest<Q>,
-    ) -> impl Future<Item = KasaResponse<R>, Error = crate::kasa::error::Error>
+    ) -> impl Future<Item = KasaResponse<R>, Error = Error>
     where
         Q: serde::ser::Serialize + std::fmt::Debug,
         R: serde::de::DeserializeOwned + std::fmt::Debug,
@@ -144,7 +150,7 @@ impl Kasa {
         &self,
         device_id: &String,
         req: &PassthroughParamsData,
-    ) -> impl Future<Item = KasaResponse<R>, Error = crate::kasa::error::Error>
+    ) -> impl Future<Item = KasaResponse<R>, Error = Error>
     where
         R: serde::de::DeserializeOwned + std::fmt::Debug,
     {
@@ -153,25 +159,20 @@ impl Kasa {
                 method: "passthrough".to_string(),
                 params,
             })),
-            Err(e) => future::Either::B(future::err(
-                format!("error serializing passthrough params: {}", e.description()).into(),
-            )),
+            Err(e) => future::Either::B(future::err(e.chain_err(|| ErrorKind::PassthtoughParams))),
         }
     }
 
     pub fn get_device_list(
         &self,
-    ) -> impl Future<Item = KasaResponse<DeviceListResult>, Error = crate::kasa::error::Error> {
+    ) -> impl Future<Item = KasaResponse<DeviceListResult>, Error = Error> {
         self.token_query(KasaRequest {
             method: "getDeviceList".to_string(),
             params: DeviceListParams::new(),
         })
     }
 
-    pub fn emeter(
-        &self,
-        device_id: &String,
-    ) -> impl Future<Item = EmeterResult, Error = crate::kasa::error::Error> {
+    pub fn emeter(&self, device_id: &String) -> impl Future<Item = EmeterResult, Error = Error> {
         self.passthrough_query(
             device_id,
             &PassthroughParamsData::new().add_emeter(EMeterParams::new().add_realtime()),
@@ -180,25 +181,14 @@ impl Kasa {
             |response: KasaResponse<PassthroughResult>| match response.result {
                 Some(result) => match result.unpack() {
                     Ok(emeter) => future::ok(emeter),
-                    Err(e) => future::err(
-                        format!(
-                            "error parsing passthrough response: {}",
-                            e.description().to_string()
-                        )
-                        .into(),
-                    ),
+                    Err(e) => future::err(e),
                 },
-                None => future::err(
-                    response
-                        .message
-                        .unwrap_or("response is empty".to_string())
-                        .into(),
-                ),
+                None => future::err(ErrorKind::EmptyPassthroughResponse.into()),
             },
         )
         .and_then(|w: EmeterResultWrapper| match w.emeter {
             Some(emeter) => future::ok(emeter),
-            None => future::err("emeter response is empty".into()),
+            None => future::err(ErrorKind::EmptyEmeterResponse.into()),
         })
     }
 }
@@ -304,8 +294,7 @@ struct PassthroughParams {
 
 impl PassthroughParams {
     fn new<T: serde::ser::Serialize>(device_id: String, req: &T) -> Result<Self> {
-        let request_data =
-            serde_json::to_string(req).chain_err(|| "unable to encode passthrough request data")?;
+        let request_data = serde_json::to_string(req)?;
 
         Ok(Self {
             device_id,
@@ -325,8 +314,9 @@ impl PassthroughResult {
     where
         T: serde::de::DeserializeOwned,
     {
-        serde_json::from_str(&self.response_data)
-            .chain_err(|| "unable to decode passthrough response data")
+        serde_json::from_str(&self.response_data).map_err(|e| {
+            Error::with_chain(e, ErrorKind::Deserialization(self.response_data.clone()))
+        })
     }
 }
 

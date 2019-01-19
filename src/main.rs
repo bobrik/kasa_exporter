@@ -3,6 +3,8 @@ use std::net;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use error_chain::ChainedError;
+
 use futures::future;
 use futures::future::Future;
 use futures::stream;
@@ -131,17 +133,21 @@ fn service(
                                         http::StatusCode::INTERNAL_SERVER_ERROR;
 
                                     Ok(http_response)
-                                }
+                                };
                             }
                         };
 
-                        http_response.headers_mut()
+                        http_response
+                            .headers_mut()
                             .insert(hyper::header::CONTENT_TYPE, content_type);
 
                         Ok(http_response)
                     },
                 )
-                .or_else(|_| Ok(Response::new(Body::empty())))
+                .or_else(|e| {
+                    eprintln!("error from kasa api: {}", e.display_chain().to_string());
+                    Ok(Response::new(Body::empty()))
+                })
         })
     }
 }
