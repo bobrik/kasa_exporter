@@ -180,7 +180,9 @@ fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> Regist
 
     let registry = Registry::new();
 
-    for metric in vec![&voltage, &current, &power] {
+    let collectors = vec![&voltage, &current, &power];
+
+    for metric in collectors {
         registry.register(Box::new(metric.clone())).unwrap();
     }
 

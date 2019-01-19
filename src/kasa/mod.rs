@@ -56,7 +56,7 @@ impl Kasa {
                     future::err(
                         ErrorKind::EmptyAuthResponse(
                             auth_response.error_code,
-                            auth_response.message.unwrap_or("".to_string()),
+                            auth_response.message.unwrap_or_else(||  "".to_string()),
                         )
                         .into(),
                     )
@@ -148,7 +148,7 @@ impl Kasa {
 
     fn passthrough_query<R>(
         &self,
-        device_id: &String,
+        device_id: &str,
         req: &PassthroughParamsData,
     ) -> impl Future<Item = KasaResponse<R>, Error = Error>
     where
@@ -172,7 +172,7 @@ impl Kasa {
         })
     }
 
-    pub fn emeter(&self, device_id: &String) -> impl Future<Item = EmeterResult, Error = Error> {
+    pub fn emeter(&self, device_id: &str) -> impl Future<Item = EmeterResult, Error = Error> {
         self.passthrough_query(
             device_id,
             &PassthroughParamsData::new().add_emeter(EMeterParams::new().add_realtime()),
@@ -222,12 +222,12 @@ struct AuthParams {
 
 impl AuthParams {
     fn new(app_type: String, username: String, password: String) -> Self {
-        return Self {
+        Self {
             app_type,
             cloud_user_name: username,
             cloud_password: password,
             terminal_uuid: Uuid::new_v4().to_string(),
-        };
+        }
     }
 }
 
@@ -254,7 +254,7 @@ struct DeviceListParams {}
 
 impl DeviceListParams {
     fn new() -> Self {
-        return Self {};
+        Self {}
     }
 }
 
