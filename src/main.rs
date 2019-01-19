@@ -1,7 +1,6 @@
 use std::net;
 
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use error_chain::ChainedError;
 
@@ -13,18 +12,11 @@ use futures::stream::Stream;
 use tokio;
 
 use hyper::service::service_fn;
-use hyper::Body;
-use hyper::Request;
-use hyper::Response;
-use hyper::Server;
+use hyper::{Body, Request, Response, Server};
 
 use http;
 
-use prometheus;
-use prometheus::Encoder;
-use prometheus::GaugeVec;
-use prometheus::Registry;
-use prometheus::TextEncoder;
+use prometheus::{Encoder, GaugeVec, Registry, TextEncoder};
 
 use clap;
 

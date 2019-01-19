@@ -6,14 +6,11 @@ use futures::future::Future;
 use futures::stream::Stream;
 
 use hyper::client::connect::HttpConnector;
-use hyper::Body;
-use hyper::Client;
-use hyper::Method;
-use hyper::Request;
+use hyper::{Body, Client, Method, Request};
 
 use hyper_tls::HttpsConnector;
 
-use uuid::Uuid;
+use uuid;
 
 mod error;
 
@@ -56,7 +53,7 @@ impl Kasa {
                     future::err(
                         ErrorKind::EmptyAuthResponse(
                             auth_response.error_code,
-                            auth_response.message.unwrap_or_else(||  "".to_string()),
+                            auth_response.message.unwrap_or_else(|| "".to_string()),
                         )
                         .into(),
                     )
@@ -226,7 +223,7 @@ impl AuthParams {
             app_type,
             cloud_user_name: username,
             cloud_password: password,
-            terminal_uuid: Uuid::new_v4().to_string(),
+            terminal_uuid: uuid::Uuid::new_v4().to_string(),
         }
     }
 }
