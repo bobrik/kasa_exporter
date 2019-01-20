@@ -17,6 +17,37 @@ use prometheus::{Encoder, GaugeVec, Registry, TextEncoder};
 use super::kasa;
 
 /// Implements an exporter for a given client.
+///
+/// # Examples
+///
+/// ```
+/// use std::net;
+/// use std::sync::{Arc, Mutex};
+/// use futures::future;
+/// use futures::future::Future;
+/// use futures::stream;
+/// use futures::stream::Stream;
+/// use tokio;
+/// use hyper;
+///
+/// fn main() {
+///     tokio::run(
+///         kasa_exporter::kasa::Kasa::new(
+///             "ebpf_exporter".to_string(),
+///             "foo@bar.com".to_string(),
+///             "123".to_string(),
+///         )
+///         .map_err(|e| eprintln!("kasa authentication error: {}", e))
+///         .and_then(move |c| {
+///             let client = Arc::new(Mutex::new(c));
+///
+///             hyper::Server::bind(&"[::1]:12345".parse().unwrap())
+///                 .serve(move || hyper::service::service_fn(kasa_exporter::exporter::service(client.clone())))
+///                 .map_err(|e| eprintln!("server error: {}", e))
+///         }),
+///     );
+/// }
+/// ```
 pub fn service(
     client: Arc<Mutex<kasa::Kasa>>,
 ) -> impl Fn(Request<Body>) -> Box<Future<Item = Response<Body>, Error = hyper::Error> + Send> {

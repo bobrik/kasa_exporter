@@ -264,7 +264,6 @@ struct AuthResult {
     token: String,
 }
 
-
 /// Parameters for device list request.
 #[derive(Debug, serde_derive::Serialize)]
 struct DeviceListParams {}
@@ -364,7 +363,6 @@ impl PassthroughParamsData {
     }
 }
 
-
 /// Parameters for emeter requests.
 #[derive(Debug, serde_derive::Serialize)]
 struct EMeterParams {
@@ -384,7 +382,6 @@ impl EMeterParams {
         self
     }
 }
-
 
 /// Parameters for realtime emeter data.
 #[derive(Debug, serde_derive::Serialize)]

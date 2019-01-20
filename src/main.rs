@@ -4,15 +4,12 @@ use std::sync::{Arc, Mutex};
 
 use futures::Future;
 
+use clap;
+use hyper;
 use tokio;
 
-use hyper::service::service_fn;
-use hyper::Server;
-
-use clap;
-
-pub mod exporter;
-pub mod kasa;
+mod exporter;
+mod kasa;
 
 fn main() {
     let matches = clap::App::new(clap::crate_name!())
@@ -56,16 +53,15 @@ fn main() {
             .and_then(move |c| {
                 let client = Arc::new(Mutex::new(c));
 
-                Server::bind(
+                hyper::Server::bind(
                     &matches
                         .value_of("web.listen-address")
                         .unwrap()
                         .parse()
                         .unwrap(),
                 )
-                .serve(move || service_fn(exporter::service(client.clone())))
+                .serve(move || hyper::service::service_fn(exporter::service(client.clone())))
                 .map_err(|e| eprintln!("server error: {}", e))
             }),
     );
 }
-
