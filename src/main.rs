@@ -1,7 +1,5 @@
 use std::net;
 
-use std::sync::{Arc, Mutex};
-
 use futures::Future;
 
 use clap;
@@ -50,9 +48,7 @@ fn main() {
     tokio::run(
         kasa::Kasa::new(clap::crate_name!().to_string(), username, password)
             .map_err(|e| eprintln!("kasa authentication error: {}", e))
-            .and_then(move |c| {
-                let client = Arc::new(Mutex::new(c));
-
+            .and_then(move |client| {
                 hyper::Server::bind(
                     &matches
                         .value_of("web.listen-address")

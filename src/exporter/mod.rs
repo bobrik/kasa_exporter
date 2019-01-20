@@ -3,8 +3,6 @@
 
 use error_chain::ChainedError;
 
-use std::sync::{Arc, Mutex};
-
 use futures::future;
 use futures::future::Future;
 use futures::stream;
@@ -38,9 +36,7 @@ use super::kasa;
 ///             "123".to_string(),
 ///         )
 ///         .map_err(|e| eprintln!("kasa authentication error: {}", e))
-///         .and_then(move |c| {
-///             let client = Arc::new(Mutex::new(c));
-///
+///         .and_then(move |client| {
 ///             hyper::Server::bind(&"[::1]:12345".parse().unwrap())
 ///                 .serve(move || hyper::service::service_fn(kasa_exporter::exporter::service(client.clone())))
 ///                 .map_err(|e| eprintln!("server error: {}", e))
@@ -49,24 +45,19 @@ use super::kasa;
 /// }
 /// ```
 pub fn service(
-    client: Arc<Mutex<kasa::Kasa>>,
+    client: kasa::Kasa,
 ) -> impl Fn(Request<Body>) -> Box<Future<Item = Response<Body>, Error = hyper::Error> + Send> {
     move |_| {
         Box::new({
-            // This is ugly
-            let inner_client = Arc::clone(&client);
+            let client = client.clone();
 
             client
-                .lock()
-                .unwrap()
                 .get_device_list()
                 .and_then(|devices| match devices.result {
                     Some(devices) => future::Either::A(
                         stream::iter_ok(devices.device_list.into_iter())
                             .and_then(move |device| {
-                                inner_client
-                                    .lock()
-                                    .unwrap()
+                                client
                                     .emeter(&device.device_id)
                                     .map(|emeter| (device, emeter))
                             })

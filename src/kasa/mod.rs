@@ -15,7 +15,7 @@ use hyper_tls::HttpsConnector;
 
 use uuid;
 
-mod error;
+pub mod error;
 
 use crate::kasa::error::*;
 
@@ -206,6 +206,15 @@ impl Kasa {
 impl fmt::Debug for Kasa {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Kasa {{ token: {} }}", self.token)
+    }
+}
+
+impl Clone for Kasa {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            token: self.token.clone(),
+        }
     }
 }
 
