@@ -20,7 +20,7 @@ use prometheus::{Encoder, GaugeVec, Registry, TextEncoder};
 
 use clap;
 
-mod kasa;
+pub mod kasa;
 
 fn main() {
     let matches = clap::App::new(clap::crate_name!())
@@ -71,13 +71,14 @@ fn main() {
                         .parse()
                         .unwrap(),
                 )
-                .serve(move || service_fn(service(client.clone())))
+                .serve(move || service_fn(exporter_service(client.clone())))
                 .map_err(|e| eprintln!("server error: {}", e))
             }),
     );
 }
 
-fn service(
+/// Implements an exporter for a given client.
+fn exporter_service(
     client: Arc<Mutex<kasa::Kasa>>,
 ) -> impl Fn(Request<Body>) -> Box<Future<Item = Response<Body>, Error = hyper::Error> + Send> {
     move |_| {
@@ -144,6 +145,7 @@ fn service(
     }
 }
 
+/// Populates data for a metric from a given emeter measurement.
 macro_rules! fill_metric {
     ( labels = $labels:expr, $($metric:expr => $value:expr,)+ ) => {
         $(
@@ -153,6 +155,8 @@ macro_rules! fill_metric {
         )+
     }
 }
+
+/// Creates a throw away registry to populate data for a request.
 fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> Registry {
     let voltage = gauge_vec(
         "device_voltage",
@@ -199,6 +203,7 @@ fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> Regist
     registry
 }
 
+/// Creates Gauge vector with given parameters.
 fn gauge_vec(name: &str, help: &str, labels: &[&str]) -> prometheus::GaugeVec {
     GaugeVec::new(prometheus::opts!(name, help), labels).unwrap()
 }

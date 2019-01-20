@@ -1,3 +1,6 @@
+//! # Kasa
+//! A library for interacting with [TP-Link Kasa](https://www.kasasmart.com/) API
+
 use std::error::Error as StdError;
 use std::fmt;
 
@@ -18,12 +21,16 @@ use crate::kasa::error::*;
 
 const ENDPOINT: &str = "https://wap.tplinkcloud.com/";
 
+/// A client for interacting with API
 pub struct Kasa {
     client: Client<HttpsConnector<HttpConnector>>,
     token: String,
 }
 
 impl Kasa {
+    /// Creates a new client with credentials and app name (arbitrary string).
+    ///
+    /// This method returns a future and should be called in a [tokio](https://tokio.rs) runtime.
     pub fn new(
         app: String,
         username: String,
@@ -62,10 +69,12 @@ impl Kasa {
         )
     }
 
+    /// Returns an HTTPS client for network communication.
     fn client() -> Result<Client<HttpsConnector<HttpConnector>>> {
         Ok(Client::builder().build::<_, Body>(HttpsConnector::new(4)?))
     }
 
+    /// Send a request to API with an optional token.
     fn query<Q, R>(
         client: &Client<HttpsConnector<HttpConnector>>,
         token: Option<&String>,
@@ -132,6 +141,7 @@ impl Kasa {
         )
     }
 
+    /// Sends an authenticated request with a token provided by auth request.
     fn token_query<Q, R>(
         &self,
         req: KasaRequest<Q>,
@@ -143,6 +153,7 @@ impl Kasa {
         Self::query(&self.client, Some(&self.token), req)
     }
 
+    /// Sends a request directly to device via API.
     fn passthrough_query<R>(
         &self,
         device_id: &str,
@@ -160,6 +171,7 @@ impl Kasa {
         }
     }
 
+    /// Returns list of devices available to the client.
     pub fn get_device_list(
         &self,
     ) -> impl Future<Item = KasaResponse<DeviceListResult>, Error = Error> {
@@ -169,6 +181,7 @@ impl Kasa {
         })
     }
 
+    /// Returns emeter measurements from a supplied device.
     pub fn emeter(&self, device_id: &str) -> impl Future<Item = EmeterResult, Error = Error> {
         self.passthrough_query(
             device_id,
@@ -196,12 +209,14 @@ impl fmt::Debug for Kasa {
     }
 }
 
+/// A request to Kasa API.
 #[derive(Debug, serde_derive::Serialize)]
 struct KasaRequest<T> {
     method: String,
     params: T,
 }
 
+/// Parameters for authentication request.
 #[derive(Debug, serde_derive::Serialize)]
 struct AuthParams {
     #[serde(rename = "appType")]
@@ -218,6 +233,7 @@ struct AuthParams {
 }
 
 impl AuthParams {
+    /// Creates authentication request parameters with given credentials.
     fn new(app_type: String, username: String, password: String) -> Self {
         Self {
             app_type,
@@ -228,6 +244,7 @@ impl AuthParams {
     }
 }
 
+/// A generic response from Kasa API.
 #[derive(Debug, serde_derive::Deserialize)]
 pub struct KasaResponse<T> {
     pub error_code: i32,
@@ -236,6 +253,7 @@ pub struct KasaResponse<T> {
     pub result: Option<T>,
 }
 
+/// An authentication response data.
 #[derive(Debug, serde_derive::Deserialize)]
 struct AuthResult {
     #[serde(rename = "accountId")]
@@ -246,21 +264,26 @@ struct AuthResult {
     token: String,
 }
 
+
+/// Parameters for device list request.
 #[derive(Debug, serde_derive::Serialize)]
 struct DeviceListParams {}
 
 impl DeviceListParams {
+    /// Creates empty device list parameters.
     fn new() -> Self {
         Self {}
     }
 }
 
+/// List of devices.
 #[derive(Debug, serde_derive::Deserialize)]
 pub struct DeviceListResult {
     #[serde(rename = "deviceList")]
     pub device_list: Vec<DeviceListEntry>,
 }
 
+/// Device data from listing response.
 #[derive(Debug, serde_derive::Deserialize)]
 pub struct DeviceListEntry {
     pub alias: String,
@@ -280,6 +303,7 @@ pub struct DeviceListEntry {
     pub firmware_version: String,
 }
 
+/// A wrapper for parameters for passthrough (going directly to device) requests.
 #[derive(Debug, serde_derive::Serialize)]
 struct PassthroughParams {
     #[serde(rename = "deviceId")]
@@ -290,6 +314,7 @@ struct PassthroughParams {
 }
 
 impl PassthroughParams {
+    /// Creates empty passthrough parameters.
     fn new<T: serde::ser::Serialize>(device_id: String, req: &T) -> Result<Self> {
         let request_data = serde_json::to_string(req)?;
 
@@ -300,6 +325,7 @@ impl PassthroughParams {
     }
 }
 
+/// Response data for passthrough requests.
 #[derive(Debug, serde_derive::Deserialize)]
 pub struct PassthroughResult {
     #[serde(rename = "responseData")]
@@ -307,6 +333,7 @@ pub struct PassthroughResult {
 }
 
 impl PassthroughResult {
+    /// Unpacks double-encoded passthrough result.
     fn unpack<T>(&self) -> Result<T>
     where
         T: serde::de::DeserializeOwned,
@@ -317,6 +344,7 @@ impl PassthroughResult {
     }
 }
 
+/// Parameters for passthrough requests.
 #[derive(Debug, serde_derive::Serialize)]
 struct PassthroughParamsData {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -324,16 +352,20 @@ struct PassthroughParamsData {
 }
 
 impl PassthroughParamsData {
+    /// Creates empty passthrough parameters.
     fn new() -> Self {
         Self { emeter: None }
     }
 
+    /// Adds query for emeter data.
     fn add_emeter(mut self, emeter: EMeterParams) -> Self {
         self.emeter = Some(emeter);
         self
     }
 }
 
+
+/// Parameters for emeter requests.
 #[derive(Debug, serde_derive::Serialize)]
 struct EMeterParams {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -341,29 +373,36 @@ struct EMeterParams {
 }
 
 impl EMeterParams {
+    /// Creates empty emeter parameters.
     fn new() -> Self {
         Self { get_realtime: None }
     }
 
+    /// Adds query for realtime data.
     fn add_realtime(mut self) -> Self {
         self.get_realtime = Some(EMeterGetRealtimeParams {});
         self
     }
 }
 
+
+/// Parameters for realtime emeter data.
 #[derive(Debug, serde_derive::Serialize)]
 struct EMeterGetRealtimeParams {}
 
+/// A wrapper for emeter results.
 #[derive(Debug, serde_derive::Deserialize)]
 struct EmeterResultWrapper {
     emeter: Option<EmeterResult>,
 }
 
+/// Results of an emeter request.
 #[derive(Debug, serde_derive::Deserialize)]
 pub struct EmeterResult {
     pub get_realtime: Option<EmeterGetRealtimeResult>,
 }
 
+/// Realtime measurements from an emeter request.
 #[derive(Debug, serde_derive::Deserialize)]
 pub struct EmeterGetRealtimeResult {
     pub error_code: Option<i32>,
