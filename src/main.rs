@@ -26,7 +26,7 @@ fn main() {
                         .map_err(|e| e.to_string())
                 })
                 .takes_value(true)
-                .default_value(":12345"),
+                .default_value("[::1]:12345"),
         )
         .arg(
             clap::Arg::with_name("kasa.username")

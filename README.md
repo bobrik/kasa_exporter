@@ -47,7 +47,7 @@ OPTIONS:
         --kasa.password <kasa.password>              Password to log into Kasa service
         --kasa.username <kasa.username>              Username to log into Kasa service
         --web.listen-address <web.listen-address>
-            Address on which to expose metrics and web interface [default: :12345]
+            Address on which to expose metrics and web interface [default: [::1]:12345]
 ```
 
 Note that `web.listen-address` expects `<ip>:<port>`, e.g.:
