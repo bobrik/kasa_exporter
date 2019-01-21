@@ -19,12 +19,12 @@ use crate::kasa::error::*;
 const ENDPOINT: &str = "https://wap.tplinkcloud.com/";
 
 /// A client for interacting with API
-pub struct Kasa<T> {
+pub struct Client<T> {
     client: hyper::Client<T>,
     token: String,
 }
 
-impl<T> Kasa<T>
+impl<T> Client<T>
 where
     T: hyper::client::connect::Connect + Sync + 'static,
 {
@@ -36,7 +36,7 @@ where
         app: String,
         username: String,
         password: String,
-    ) -> impl Future<Item = Kasa<T>, Error = Error> {
+    ) -> impl Future<Item = Client<T>, Error = Error> {
         Self::query(
             &client,
             None,
@@ -187,7 +187,7 @@ where
     }
 }
 
-impl<T> fmt::Debug for Kasa<T> {
+impl<T> fmt::Debug for Client<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Kasa {{ token: {} }}", self.token)
     }

@@ -36,7 +36,7 @@ use super::kasa;
 ///         .build::<_, hyper::Body>(hyper_tls::HttpsConnector::new(1).unwrap());
 ///
 ///     tokio::run(
-///         kasa_exporter::kasa::Kasa::new(
+///         kasa_exporter::kasa::Client::new(
 ///             http_client,
 ///             "ebpf_exporter".to_string(),
 ///             "foo@bar.com".to_string(),
@@ -54,7 +54,7 @@ use super::kasa;
 /// }
 /// ```
 pub fn service<T>(
-    client: Arc<kasa::Kasa<T>>,
+    client: Arc<kasa::Client<T>>,
 ) -> impl Fn(
     hyper::Request<hyper::Body>,
 ) -> Box<Future<Item = hyper::Response<hyper::Body>, Error = hyper::Error> + Send>
@@ -66,7 +66,7 @@ where
 
 /// Returns a future that implements a response for an exporter request.
 fn serve<T>(
-    client: Arc<kasa::Kasa<T>>,
+    client: Arc<kasa::Client<T>>,
 ) -> impl Future<Item = hyper::Response<hyper::Body>, Error = hyper::Error>
 where
     T: hyper::client::connect::Connect + Sync + 'static,

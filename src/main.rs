@@ -52,7 +52,7 @@ fn main() {
         .build::<_, hyper::Body>(hyper_tls::HttpsConnector::new(1).unwrap());
 
     tokio::run(
-        kasa::Kasa::new(
+        kasa::Client::new(
             http_client,
             clap::crate_name!().to_string(),
             username,
