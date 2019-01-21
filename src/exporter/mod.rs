@@ -1,6 +1,8 @@
 //! # Exporter
 //! Prometheus exporter service for Kasa to be used in Hyper Server.
 
+use std::sync::Arc;
+
 use error_chain::ChainedError;
 
 use futures::future;
@@ -20,7 +22,7 @@ use super::kasa;
 ///
 /// ```
 /// use std::net;
-/// use std::sync::{Arc, Mutex};
+/// use std::sync::Arc;
 /// use futures::future;
 /// use futures::future::Future;
 /// use futures::stream;
@@ -37,19 +39,20 @@ use super::kasa;
 ///         )
 ///         .map_err(|e| eprintln!("kasa authentication error: {}", e))
 ///         .and_then(move |client| {
+///             let client = Arc::new(client);
 ///             hyper::Server::bind(&"[::1]:12345".parse().unwrap())
-///                 .serve(move || hyper::service::service_fn(kasa_exporter::exporter::service(client.clone())))
+///                 .serve(move || hyper::service::service_fn(kasa_exporter::exporter::service(Arc::clone(&client))))
 ///                 .map_err(|e| eprintln!("server error: {}", e))
 ///         }),
 ///     );
 /// }
 /// ```
 pub fn service(
-    client: kasa::Kasa,
+    client: Arc<kasa::Kasa>,
 ) -> impl Fn(Request<Body>) -> Box<Future<Item = Response<Body>, Error = hyper::Error> + Send> {
     move |_| {
         Box::new({
-            let client = client.clone();
+            let client = Arc::clone(&client);
 
             client
                 .get_device_list()

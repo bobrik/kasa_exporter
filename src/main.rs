@@ -1,5 +1,7 @@
 use std::net;
 
+use std::sync::Arc;
+
 use futures::Future;
 
 use clap;
@@ -49,6 +51,8 @@ fn main() {
         kasa::Kasa::new(clap::crate_name!().to_string(), username, password)
             .map_err(|e| eprintln!("kasa authentication error: {}", e))
             .and_then(move |client| {
+                let client = Arc::new(client);
+
                 hyper::Server::bind(
                     &matches
                         .value_of("web.listen-address")
@@ -56,7 +60,7 @@ fn main() {
                         .parse()
                         .unwrap(),
                 )
-                .serve(move || hyper::service::service_fn(exporter::service(client.clone())))
+                .serve(move || hyper::service::service_fn(exporter::service(Arc::clone(&client))))
                 .map_err(|e| eprintln!("server error: {}", e))
             }),
     );

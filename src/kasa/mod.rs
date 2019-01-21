@@ -209,15 +209,6 @@ impl fmt::Debug for Kasa {
     }
 }
 
-impl Clone for Kasa {
-    fn clone(&self) -> Self {
-        Self {
-            client: self.client.clone(),
-            token: self.token.clone(),
-        }
-    }
-}
-
 /// A request to Kasa API.
 #[derive(Debug, serde_derive::Serialize)]
 struct KasaRequest<T> {
