@@ -1,7 +1,10 @@
 [package]
 name = "kasa_exporter"
 version = "0.1.0"
+description = "Prometheus exporter for TP-Link kasa devices"
 authors = ["Ivan Babrou <hello@ivan.computer>"]
+repository = "https://github.com/bobrik/kasa_exporter"
+license = "MIT"
 edition = "2018"
 
 [features]
