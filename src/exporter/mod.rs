@@ -10,9 +10,10 @@ use futures::future::Future;
 use futures::stream;
 use futures::stream::Stream;
 
-use hyper::{Body, Request, Response};
+use hyper;
 
-use prometheus::{Encoder, GaugeVec, Registry, TextEncoder};
+use prometheus;
+use prometheus::Encoder;
 
 use super::kasa;
 
@@ -54,7 +55,9 @@ use super::kasa;
 /// ```
 pub fn service<T>(
     client: Arc<kasa::Kasa<T>>,
-) -> impl Fn(Request<Body>) -> Box<Future<Item = Response<Body>, Error = hyper::Error> + Send>
+) -> impl Fn(
+    hyper::Request<hyper::Body>,
+) -> Box<Future<Item = hyper::Response<hyper::Body>, Error = hyper::Error> + Send>
 where
     T: hyper::client::connect::Connect + Sync + 'static,
 {
@@ -62,7 +65,9 @@ where
 }
 
 /// Returns a future that implements a response for an exporter request.
-fn serve<T>(client: Arc<kasa::Kasa<T>>) -> impl Future<Item = Response<Body>, Error = hyper::Error>
+fn serve<T>(
+    client: Arc<kasa::Kasa<T>>,
+) -> impl Future<Item = hyper::Response<hyper::Body>, Error = hyper::Error>
 where
     T: hyper::client::connect::Connect + Sync + 'static,
 {
@@ -82,14 +87,14 @@ where
         })
         .and_then(
             |emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>| {
-                let encoder = TextEncoder::new();
+                let encoder = prometheus::TextEncoder::new();
 
                 let mut buffer = vec![];
                 encoder
                     .encode(&registry(emeters).gather(), &mut buffer)
                     .unwrap();
 
-                let mut http_response = Response::new(Body::from(buffer));
+                let mut http_response = hyper::Response::new(hyper::Body::from(buffer));
 
                 let content_type = match encoder.format_type().parse() {
                     Ok(content_type) => content_type,
@@ -97,7 +102,7 @@ where
                         return {
                             eprintln!("error formatting content type: {}", e);
 
-                            let mut http_response = Response::new(Body::empty());
+                            let mut http_response = hyper::Response::new(hyper::Body::empty());
                             *http_response.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
 
                             Ok(http_response)
@@ -114,7 +119,7 @@ where
         )
         .or_else(|e| {
             eprintln!("error from kasa api: {}", e.display_chain().to_string());
-            Ok(Response::new(Body::empty()))
+            Ok(hyper::Response::new(hyper::Body::empty()))
         })
 }
 
@@ -130,7 +135,7 @@ macro_rules! fill_metric {
 }
 
 /// Creates a throw away registry to populate data for a request.
-fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> Registry {
+fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> prometheus::Registry {
     let voltage = gauge_vec(
         "device_electric_potential_volts",
         "Voltage reading from device",
@@ -147,7 +152,7 @@ fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> Regist
         &["device_alias", &"device_id"],
     );
 
-    let registry = Registry::new();
+    let registry = prometheus::Registry::new();
 
     let collectors = vec![&voltage, &current, &power];
 
@@ -178,5 +183,5 @@ fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> Regist
 
 /// Creates Gauge vector with given parameters.
 fn gauge_vec(name: &str, help: &str, labels: &[&str]) -> prometheus::GaugeVec {
-    GaugeVec::new(prometheus::opts!(name, help), labels).unwrap()
+    prometheus::GaugeVec::new(prometheus::opts!(name, help), labels).unwrap()
 }

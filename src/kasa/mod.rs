@@ -8,7 +8,7 @@ use futures::future;
 use futures::future::Future;
 use futures::stream::Stream;
 
-use hyper::{Body, Client, Method, Request};
+use hyper;
 
 use uuid;
 
@@ -20,7 +20,7 @@ const ENDPOINT: &str = "https://wap.tplinkcloud.com/";
 
 /// A client for interacting with API
 pub struct Kasa<T> {
-    client: Client<T>,
+    client: hyper::Client<T>,
     token: String,
 }
 
@@ -32,7 +32,7 @@ where
     ///
     /// This method returns a future and should be called in a [tokio](https://tokio.rs) runtime.
     pub fn new(
-        client: Client<T>,
+        client: hyper::Client<T>,
         app: String,
         username: String,
         password: String,
@@ -65,7 +65,7 @@ where
 
     /// Send a request to API with an optional token.
     fn query<Q, R>(
-        client: &Client<T>,
+        client: &hyper::Client<T>,
         token: Option<&String>,
         request: KasaRequest<Q>,
     ) -> impl Future<Item = KasaResponse<R>, Error = Error>
@@ -80,7 +80,7 @@ where
             Ok(request_body) => request_body,
         };
 
-        let mut http_request = Request::new(Body::from(request_body));
+        let mut http_request = hyper::Request::new(hyper::Body::from(request_body));
 
         let mut uri = ENDPOINT.to_string();
         if let Some(value) = token {
@@ -92,7 +92,7 @@ where
             Ok(request_uri) => request_uri,
         };
 
-        *http_request.method_mut() = Method::POST;
+        *http_request.method_mut() = hyper::Method::POST;
         *http_request.uri_mut() = request_uri;
 
         http_request.headers_mut().insert(
