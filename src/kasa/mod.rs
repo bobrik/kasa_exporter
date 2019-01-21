@@ -40,12 +40,12 @@ where
         Self::query(
             &client,
             None,
-            KasaRequest {
+            Request {
                 method: "login".to_string(),
                 params: AuthParams::new(app, username, password),
             },
         )
-        .and_then(|auth_response: KasaResponse<AuthResult>| {
+        .and_then(|auth_response: Response<AuthResult>| {
             if let Some(result) = auth_response.result {
                 future::ok(Self {
                     client,
@@ -67,8 +67,8 @@ where
     fn query<Q, R>(
         client: &hyper::Client<T>,
         token: Option<&String>,
-        request: KasaRequest<Q>,
-    ) -> impl Future<Item = KasaResponse<R>, Error = Error>
+        request: Request<Q>,
+    ) -> impl Future<Item = Response<R>, Error = Error>
     where
         Q: serde::ser::Serialize + std::fmt::Debug,
         R: serde::de::DeserializeOwned + std::fmt::Debug,
@@ -131,10 +131,7 @@ where
     }
 
     /// Sends an authenticated request with a token provided by auth request.
-    fn token_query<Q, R>(
-        &self,
-        req: KasaRequest<Q>,
-    ) -> impl Future<Item = KasaResponse<R>, Error = Error>
+    fn token_query<Q, R>(&self, req: Request<Q>) -> impl Future<Item = Response<R>, Error = Error>
     where
         Q: serde::ser::Serialize + std::fmt::Debug,
         R: serde::de::DeserializeOwned + std::fmt::Debug,
@@ -147,12 +144,12 @@ where
         &self,
         device_id: &str,
         req: &PassthroughParamsData,
-    ) -> impl Future<Item = KasaResponse<R>, Error = Error>
+    ) -> impl Future<Item = Response<R>, Error = Error>
     where
         R: serde::de::DeserializeOwned + std::fmt::Debug,
     {
         match PassthroughParams::new(device_id.to_owned(), req) {
-            Ok(params) => future::Either::A(self.token_query(KasaRequest {
+            Ok(params) => future::Either::A(self.token_query(Request {
                 method: "passthrough".to_string(),
                 params,
             })),
@@ -161,10 +158,8 @@ where
     }
 
     /// Returns list of devices available to the client.
-    pub fn get_device_list(
-        &self,
-    ) -> impl Future<Item = KasaResponse<DeviceListResult>, Error = Error> {
-        self.token_query(KasaRequest {
+    pub fn get_device_list(&self) -> impl Future<Item = Response<DeviceListResult>, Error = Error> {
+        self.token_query(Request {
             method: "getDeviceList".to_string(),
             params: DeviceListParams::new(),
         })
@@ -177,7 +172,7 @@ where
             &PassthroughParamsData::new().add_emeter(EMeterParams::new().add_realtime()),
         )
         .and_then(
-            |response: KasaResponse<PassthroughResult>| match response.result {
+            |response: Response<PassthroughResult>| match response.result {
                 Some(result) => match result.unpack() {
                     Ok(emeter) => future::ok(emeter),
                     Err(e) => future::err(e),
@@ -200,7 +195,7 @@ impl<T> fmt::Debug for Kasa<T> {
 
 /// A request to Kasa API.
 #[derive(Debug, serde_derive::Serialize)]
-struct KasaRequest<T> {
+struct Request<T> {
     method: String,
     params: T,
 }
@@ -235,7 +230,7 @@ impl AuthParams {
 
 /// A generic response from Kasa API.
 #[derive(Debug, serde_derive::Deserialize)]
-pub struct KasaResponse<T> {
+pub struct Response<T> {
     pub error_code: i32,
     #[serde(rename = "msg")]
     pub message: Option<String>,
