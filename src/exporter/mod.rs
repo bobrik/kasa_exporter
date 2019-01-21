@@ -50,63 +50,61 @@ use super::kasa;
 pub fn service(
     client: Arc<kasa::Kasa>,
 ) -> impl Fn(Request<Body>) -> Box<Future<Item = Response<Body>, Error = hyper::Error> + Send> {
-    move |_| {
-        Box::new({
-            let client = Arc::clone(&client);
+    move |_| Box::new(serve(Arc::clone(&client)))
+}
 
-            client
-                .get_device_list()
-                .and_then(|devices| match devices.result {
-                    Some(devices) => future::Either::A(
-                        stream::iter_ok(devices.device_list.into_iter())
-                            .and_then(move |device| {
-                                client
-                                    .emeter(&device.device_id)
-                                    .map(|emeter| (device, emeter))
-                            })
-                            .collect(),
-                    ),
-                    None => future::Either::B(future::ok(vec![])),
-                })
-                .and_then(
-                    |emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>| {
-                        let encoder = TextEncoder::new();
-
-                        let mut buffer = vec![];
-                        encoder
-                            .encode(&registry(emeters).gather(), &mut buffer)
-                            .unwrap();
-
-                        let mut http_response = Response::new(Body::from(buffer));
-
-                        let content_type = match encoder.format_type().parse() {
-                            Ok(content_type) => content_type,
-                            Err(e) => {
-                                return {
-                                    eprintln!("error formatting content type: {}", e);
-
-                                    let mut http_response = Response::new(Body::empty());
-                                    *http_response.status_mut() =
-                                        http::StatusCode::INTERNAL_SERVER_ERROR;
-
-                                    Ok(http_response)
-                                };
-                            }
-                        };
-
-                        http_response
-                            .headers_mut()
-                            .insert(hyper::header::CONTENT_TYPE, content_type);
-
-                        Ok(http_response)
-                    },
-                )
-                .or_else(|e| {
-                    eprintln!("error from kasa api: {}", e.display_chain().to_string());
-                    Ok(Response::new(Body::empty()))
-                })
+/// Returns a future that implements a response for an exporter request.
+fn serve(client: Arc<kasa::Kasa>) -> impl Future<Item = Response<Body>, Error = hyper::Error> {
+    client
+        .get_device_list()
+        .and_then(|devices| match devices.result {
+            Some(devices) => future::Either::A(
+                stream::iter_ok(devices.device_list.into_iter())
+                    .and_then(move |device| {
+                        client
+                            .emeter(&device.device_id)
+                            .map(|emeter| (device, emeter))
+                    })
+                    .collect(),
+            ),
+            None => future::Either::B(future::ok(vec![])),
         })
-    }
+        .and_then(
+            |emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>| {
+                let encoder = TextEncoder::new();
+
+                let mut buffer = vec![];
+                encoder
+                    .encode(&registry(emeters).gather(), &mut buffer)
+                    .unwrap();
+
+                let mut http_response = Response::new(Body::from(buffer));
+
+                let content_type = match encoder.format_type().parse() {
+                    Ok(content_type) => content_type,
+                    Err(e) => {
+                        return {
+                            eprintln!("error formatting content type: {}", e);
+
+                            let mut http_response = Response::new(Body::empty());
+                            *http_response.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
+
+                            Ok(http_response)
+                        };
+                    }
+                };
+
+                http_response
+                    .headers_mut()
+                    .insert(hyper::header::CONTENT_TYPE, content_type);
+
+                Ok(http_response)
+            },
+        )
+        .or_else(|e| {
+            eprintln!("error from kasa api: {}", e.display_chain().to_string());
+            Ok(Response::new(Body::empty()))
+        })
 }
 
 /// Populates data for a metric from a given emeter measurement.
