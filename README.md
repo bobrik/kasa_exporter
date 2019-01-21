@@ -26,6 +26,13 @@ All three as reported by API with `device_id` and `device_alias` labels:
 $ cargo build
 ``` 
 
+If you wish to see debug output with requests and responses to Kasa API,
+you can pass `--features kasa_debug` to `cargo build`:
+
+```
+$ cargo build --features kasa_debug
+```
+
 ## Usage
 
 After [Building](#Building), run the command to get help:
