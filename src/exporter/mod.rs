@@ -123,17 +123,17 @@ macro_rules! fill_metric {
 /// Creates a throw away registry to populate data for a request.
 fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> Registry {
     let voltage = gauge_vec(
-        "device_voltage",
+        "device_electric_potential_volts",
         "Voltage reading from device",
         &["device_alias", &"device_id"],
     );
     let current = gauge_vec(
-        "device_current",
+        "device_electric_current_amperes",
         "Corrent reading from device",
         &["device_alias", &"device_id"],
     );
     let power = gauge_vec(
-        "device_power",
+        "device_electric_power_watts",
         "Power reading from device",
         &["device_alias", &"device_id"],
     );

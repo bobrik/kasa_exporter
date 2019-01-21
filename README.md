@@ -59,18 +59,18 @@ Example response:
 
 ```
 $ curl http://localhost:12345/
-# HELP device_current Corrent reading from device
-# TYPE device_current gauge
-device_current{device_alias="Banana",device_id="800607035E84C0B634C36B7DF52CCEC3188C1BAB"} 0.25383
-device_current{device_alias="Potato",device_id="800691A498F774D60997B91E241EE2CC18D08921"} 0.021187
-# HELP device_power Power reading from device
-# TYPE device_power gauge
-device_power{device_alias="Banana",device_id="800607035E84C0B634C36B7DF52CCEC3188C1BAB"} 29.504412
-device_power{device_alias="Potato",device_id="800691A498F774D60997B91E241EE2CC18D08921"} 0
-# HELP device_voltage Voltage reading from device
-# TYPE device_voltage gauge
-device_voltage{device_alias="Banana",device_id="800607035E84C0B634C36B7DF52CCEC3188C1BAB"} 121.999552
-device_voltage{device_alias="Potato",device_id="800691A498F774D60997B91E241EE2CC18D08921"} 121.528545
+# HELP device_electric_current_amperes Corrent reading from device
+# TYPE device_electric_current_amperes gauge
+device_electric_current_amperes{device_alias="Banana",device_id="800607035E84C0B634C36B7DF52CCEC3188C1BAB"} 0.256972
+device_electric_current_amperes{device_alias="Potato",device_id="800691A498F774D60997B91E241EE2CC18D08921"} 0.031424
+# HELP device_electric_potential_volts Voltage reading from device
+# TYPE device_electric_potential_volts gauge
+device_electric_potential_volts{device_alias="Banana",device_id="800607035E84C0B634C36B7DF52CCEC3188C1BAB"} 123.16094
+device_electric_potential_volts{device_alias="Potato",device_id="800691A498F774D60997B91E241EE2CC18D08921"} 123.130631
+# HELP device_electric_power_watts Power reading from device
+# TYPE device_electric_power_watts gauge
+device_electric_power_watts{device_alias="Banana",device_id="800607035E84C0B634C36B7DF52CCEC3188C1BAB"} 30.071476
+device_electric_power_watts{device_alias="Potato",device_id="800691A498F774D60997B91E241EE2CC18D08921"} 0.750854
 ```
 
 ## License
