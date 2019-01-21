@@ -31,8 +31,12 @@ use super::kasa;
 /// use hyper;
 ///
 /// fn main() {
+///     let http_client = hyper::Client::builder()
+///         .build::<_, hyper::Body>(hyper_tls::HttpsConnector::new(1).unwrap());
+///
 ///     tokio::run(
 ///         kasa_exporter::kasa::Kasa::new(
+///             http_client,
 ///             "ebpf_exporter".to_string(),
 ///             "foo@bar.com".to_string(),
 ///             "123".to_string(),
@@ -40,6 +44,7 @@ use super::kasa;
 ///         .map_err(|e| eprintln!("kasa authentication error: {}", e))
 ///         .and_then(move |client| {
 ///             let client = Arc::new(client);
+///
 ///             hyper::Server::bind(&"[::1]:12345".parse().unwrap())
 ///                 .serve(move || hyper::service::service_fn(kasa_exporter::exporter::service(Arc::clone(&client))))
 ///                 .map_err(|e| eprintln!("server error: {}", e))

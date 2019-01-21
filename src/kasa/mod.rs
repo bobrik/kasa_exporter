@@ -28,50 +28,39 @@ pub struct Kasa {
 }
 
 impl Kasa {
-    /// Creates a new client with credentials and app name (arbitrary string).
+    /// Creates a new client with http client, credentials, and an app name (arbitrary string).
     ///
     /// This method returns a future and should be called in a [tokio](https://tokio.rs) runtime.
     pub fn new(
+        client: Client<HttpsConnector<HttpConnector>>,
         app: String,
         username: String,
         password: String,
     ) -> impl Future<Item = Kasa, Error = Error> {
-        let client = match Self::client() {
-            Err(e) => return future::Either::A(future::err(e)),
-            Ok(client) => client,
-        };
-
-        future::Either::B(
-            Self::query(
-                &client,
-                None,
-                KasaRequest {
-                    method: "login".to_string(),
-                    params: AuthParams::new(app, username, password),
-                },
-            )
-            .and_then(|auth_response: KasaResponse<AuthResult>| {
-                if let Some(result) = auth_response.result {
-                    future::ok(Self {
-                        client,
-                        token: result.token,
-                    })
-                } else {
-                    future::err(
-                        ErrorKind::EmptyAuthResponse(
-                            auth_response.error_code,
-                            auth_response.message.unwrap_or_else(|| "".to_string()),
-                        )
-                        .into(),
-                    )
-                }
-            }),
+        Self::query(
+            &client,
+            None,
+            KasaRequest {
+                method: "login".to_string(),
+                params: AuthParams::new(app, username, password),
+            },
         )
-    }
-
-    /// Returns an HTTPS client for network communication.
-    fn client() -> Result<Client<HttpsConnector<HttpConnector>>> {
-        Ok(Client::builder().build::<_, Body>(HttpsConnector::new(4)?))
+        .and_then(|auth_response: KasaResponse<AuthResult>| {
+            if let Some(result) = auth_response.result {
+                future::ok(Self {
+                    client,
+                    token: result.token,
+                })
+            } else {
+                future::err(
+                    ErrorKind::EmptyAuthResponse(
+                        auth_response.error_code,
+                        auth_response.message.unwrap_or_else(|| "".to_string()),
+                    )
+                    .into(),
+                )
+            }
+        })
     }
 
     /// Send a request to API with an optional token.

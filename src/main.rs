@@ -6,6 +6,7 @@ use futures::Future;
 
 use clap;
 use hyper;
+use hyper_tls;
 use tokio;
 
 mod exporter;
@@ -47,21 +48,29 @@ fn main() {
     let username = matches.value_of("kasa.username").unwrap().to_string();
     let password = matches.value_of("kasa.password").unwrap().to_string();
 
-    tokio::run(
-        kasa::Kasa::new(clap::crate_name!().to_string(), username, password)
-            .map_err(|e| eprintln!("kasa authentication error: {}", e))
-            .and_then(move |client| {
-                let client = Arc::new(client);
+    let http_client = hyper::Client::builder()
+        .build::<_, hyper::Body>(hyper_tls::HttpsConnector::new(1).unwrap());
 
-                hyper::Server::bind(
-                    &matches
-                        .value_of("web.listen-address")
-                        .unwrap()
-                        .parse()
-                        .unwrap(),
-                )
-                .serve(move || hyper::service::service_fn(exporter::service(Arc::clone(&client))))
-                .map_err(|e| eprintln!("server error: {}", e))
-            }),
+    tokio::run(
+        kasa::Kasa::new(
+            http_client,
+            clap::crate_name!().to_string(),
+            username,
+            password,
+        )
+        .map_err(|e| eprintln!("kasa authentication error: {}", e))
+        .and_then(move |client| {
+            let client = Arc::new(client);
+
+            hyper::Server::bind(
+                &matches
+                    .value_of("web.listen-address")
+                    .unwrap()
+                    .parse()
+                    .unwrap(),
+            )
+            .serve(move || hyper::service::service_fn(exporter::service(Arc::clone(&client))))
+            .map_err(|e| eprintln!("server error: {}", e))
+        }),
     );
 }
