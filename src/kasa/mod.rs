@@ -8,10 +8,7 @@ use futures::future;
 use futures::future::Future;
 use futures::stream::Stream;
 
-use hyper::client::connect::HttpConnector;
 use hyper::{Body, Client, Method, Request};
-
-use hyper_tls::HttpsConnector;
 
 use uuid;
 
@@ -22,21 +19,24 @@ use crate::kasa::error::*;
 const ENDPOINT: &str = "https://wap.tplinkcloud.com/";
 
 /// A client for interacting with API
-pub struct Kasa {
-    client: Client<HttpsConnector<HttpConnector>>,
+pub struct Kasa<T> {
+    client: Client<T>,
     token: String,
 }
 
-impl Kasa {
+impl<T> Kasa<T>
+where
+    T: hyper::client::connect::Connect + Sync + 'static,
+{
     /// Creates a new client with http client, credentials, and an app name (arbitrary string).
     ///
     /// This method returns a future and should be called in a [tokio](https://tokio.rs) runtime.
     pub fn new(
-        client: Client<HttpsConnector<HttpConnector>>,
+        client: Client<T>,
         app: String,
         username: String,
         password: String,
-    ) -> impl Future<Item = Kasa, Error = Error> {
+    ) -> impl Future<Item = Kasa<T>, Error = Error> {
         Self::query(
             &client,
             None,
@@ -65,7 +65,7 @@ impl Kasa {
 
     /// Send a request to API with an optional token.
     fn query<Q, R>(
-        client: &Client<HttpsConnector<HttpConnector>>,
+        client: &Client<T>,
         token: Option<&String>,
         request: KasaRequest<Q>,
     ) -> impl Future<Item = KasaResponse<R>, Error = Error>
@@ -192,7 +192,7 @@ impl Kasa {
     }
 }
 
-impl fmt::Debug for Kasa {
+impl<T> fmt::Debug for Kasa<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Kasa {{ token: {} }}", self.token)
     }

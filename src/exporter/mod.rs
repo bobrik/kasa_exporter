@@ -52,14 +52,20 @@ use super::kasa;
 ///     );
 /// }
 /// ```
-pub fn service(
-    client: Arc<kasa::Kasa>,
-) -> impl Fn(Request<Body>) -> Box<Future<Item = Response<Body>, Error = hyper::Error> + Send> {
+pub fn service<T>(
+    client: Arc<kasa::Kasa<T>>,
+) -> impl Fn(Request<Body>) -> Box<Future<Item = Response<Body>, Error = hyper::Error> + Send>
+where
+    T: hyper::client::connect::Connect + Sync + 'static,
+{
     move |_| Box::new(serve(Arc::clone(&client)))
 }
 
 /// Returns a future that implements a response for an exporter request.
-fn serve(client: Arc<kasa::Kasa>) -> impl Future<Item = Response<Body>, Error = hyper::Error> {
+fn serve<T>(client: Arc<kasa::Kasa<T>>) -> impl Future<Item = Response<Body>, Error = hyper::Error>
+where
+    T: hyper::client::connect::Connect + Sync + 'static,
+{
     client
         .get_device_list()
         .and_then(|devices| match devices.result {
