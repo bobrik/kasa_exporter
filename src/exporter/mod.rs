@@ -119,7 +119,9 @@ where
         )
         .or_else(|e| {
             eprintln!("error from kasa api: {}", e.display_chain().to_string());
-            Ok(hyper::Response::new(hyper::Body::empty()))
+            let mut http_response = hyper::Response::new(hyper::Body::empty());
+            *http_response.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
+            Ok(http_response)
         })
 }
 
