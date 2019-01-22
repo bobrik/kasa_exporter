@@ -14,9 +14,10 @@ This is an experiment in learning [Rust](https://www.rust-lang.org/) and [tokio]
 
 All three as reported by API with `device_id` and `device_alias` labels: 
 
-* `device_current`
-* `device_power`
-* `device_voltage`
+* `device_electric_current_amperes`
+* `device_electric_potential_volts`
+* `device_electric_power_watts`
+
 
 ## Building
 
