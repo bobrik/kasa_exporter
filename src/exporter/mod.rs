@@ -134,7 +134,7 @@ fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> promet
             voltage => realtime.voltage,
             current => realtime.current,
             power   => realtime.power,
-            energy  => realtime.total,
+            energy  => realtime.total.map(|kwh| kwh * 3600.0 * 1000.0),
         };
     }
 
