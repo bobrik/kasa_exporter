@@ -378,4 +378,5 @@ pub struct EmeterGetRealtimeResult {
     pub current: Option<f64>,
     pub voltage: Option<f64>,
     pub power: Option<f64>,
+    pub total: Option<f64>,
 }
