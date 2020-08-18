@@ -32,8 +32,15 @@ where
         Some(devices) => {
             let mut results = Vec::new();
             for device in devices.device_list {
-                let emeter = client.emeter(&device.device_id).await.unwrap();
-                results.push((device, emeter));
+                match client.emeter(&device.device_id).await {
+                    Ok(emeter) => results.push((device, emeter)),
+                    Err(e) => eprintln!(
+                        "error reading device {} ({}): {}",
+                        device.alias,
+                        device.device_id,
+                        e.to_string()
+                    ),
+                };
             }
             results
         }
