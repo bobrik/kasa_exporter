@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::result::Result;
+use std::sync;
 
 pub mod error;
 
@@ -13,7 +14,10 @@ const ENDPOINT: &str = "https://wap.tplinkcloud.com/";
 /// A client for interacting with API
 pub struct Client<T> {
     client: hyper::Client<T>,
-    token: String,
+    app: String,
+    username: String,
+    password: String,
+    token: sync::Mutex<String>,
 }
 
 impl<T> Client<T>
@@ -27,10 +31,27 @@ where
         username: String,
         password: String,
     ) -> Result<Client<T>, Error> {
+        let token = Self::auth(&client, app.clone(), username.clone(), password.clone()).await?;
+
+        Ok(Self {
+            client,
+            app,
+            username,
+            password,
+            token: sync::Mutex::new(token),
+        })
+    }
+
+    async fn auth(
+        client: &hyper::Client<T>,
+        app: String,
+        username: String,
+        password: String,
+    ) -> Result<String, Error> {
         let auth_response: Response<AuthResult> = Self::query(
             &client,
             None,
-            Request {
+            &Request {
                 method: "login".to_string(),
                 params: AuthParams::new(app, username, password),
             },
@@ -38,10 +59,7 @@ where
         .await?;
 
         if let Some(result) = auth_response.result {
-            Ok(Self {
-                client,
-                token: result.token,
-            })
+            Ok(result.token)
         } else {
             Err(ErrorKind::EmptyAuthResponse(
                 auth_response.error_code,
@@ -55,7 +73,7 @@ where
     async fn query<Q, R>(
         client: &hyper::Client<T>,
         token: Option<&String>,
-        request: Request<Q>,
+        request: &Request<Q>,
     ) -> Result<Response<R>, Error>
     where
         Q: serde::ser::Serialize + std::fmt::Debug,
@@ -115,12 +133,29 @@ where
     }
 
     /// Sends an authenticated request with a token provided by auth request.
-    async fn token_query<Q, R>(&self, req: Request<Q>) -> Result<Response<R>, Error>
+    async fn token_query<Q, R>(&self, req: &Request<Q>) -> Result<Response<R>, Error>
     where
         Q: serde::ser::Serialize + std::fmt::Debug,
         R: serde::de::DeserializeOwned + std::fmt::Debug,
     {
-        Self::query(&self.client, Some(&self.token), req).await
+        let mut token = { self.token.lock().unwrap().clone() };
+
+        let result = Self::query::<Q, R>(&self.client, Some(&token), req).await?;
+
+        if result.error_code == -20675 || result.error_code == -20651 {
+            token = Self::auth(
+                &self.client,
+                self.app.clone(),
+                self.username.clone(),
+                self.password.clone(),
+            )
+            .await?;
+
+            let mut guarded_token = self.token.lock().unwrap();
+            *guarded_token = token.clone();
+        }
+
+        Self::query::<Q, R>(&self.client, Some(&token), req).await
     }
 
     /// Sends a request directly to device via API.
@@ -135,7 +170,7 @@ where
         let params = PassthroughParams::new(device_id.to_owned(), req)
             .chain_err(|| ErrorKind::PassthtoughParams)?;
 
-        self.token_query(Request {
+        self.token_query(&Request {
             method: "passthrough".to_string(),
             params,
         })
@@ -144,7 +179,7 @@ where
 
     /// Returns list of devices available to the client.
     pub async fn get_device_list(&self) -> Result<Response<DeviceListResult>, Error> {
-        self.token_query(Request {
+        self.token_query(&Request {
             method: "getDeviceList".to_string(),
             params: DeviceListParams::new(),
         })
@@ -177,7 +212,7 @@ where
 
 impl<T> fmt::Debug for Client<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Kasa {{ token: {} }}", self.token)
+        write!(f, "Kasa {{ token: {} }}", self.token.lock().unwrap())
     }
 }
 
