@@ -1,128 +1,73 @@
 //! # Exporter
 //! Prometheus exporter service for Kasa to be used in Hyper Server.
 
+use std::result::Result;
+
 use std::sync::Arc;
 
-use error_chain::ChainedError;
-
-use futures::future;
-use futures::future::Future;
-use futures::stream;
-use futures::stream::Stream;
-
-use hyper;
-
-use prometheus;
 use prometheus::Encoder;
 
 use super::kasa;
 
-/// Implements an exporter for a given client.
-///
-/// # Examples
-///
-/// ```
-/// use std::net;
-/// use std::sync::Arc;
-/// use futures::future;
-/// use futures::future::Future;
-/// use futures::stream;
-/// use futures::stream::Stream;
-/// use tokio;
-/// use hyper;
-///
-/// fn main() {
-///     let http_client = hyper::Client::builder()
-///         .build::<_, hyper::Body>(hyper_tls::HttpsConnector::new(1).unwrap());
-///
-///     tokio::run(
-///         kasa_exporter::kasa::Client::new(
-///             http_client,
-///             "ebpf_exporter".to_string(),
-///             "foo@bar.com".to_string(),
-///             "123".to_string(),
-///         )
-///         .map_err(|e| eprintln!("kasa authentication error: {}", e))
-///         .and_then(move |client| {
-///             let client = Arc::new(client);
-///
-///             hyper::Server::bind(&"[::1]:12345".parse().unwrap())
-///                 .serve(move || hyper::service::service_fn(kasa_exporter::exporter::service(Arc::clone(&client))))
-///                 .map_err(|e| eprintln!("server error: {}", e))
-///         }),
-///     );
-/// }
-/// ```
-pub fn service<T>(
-    client: Arc<kasa::Client<T>>,
-) -> impl Fn(
-    hyper::Request<hyper::Body>,
-) -> Box<Future<Item = hyper::Response<hyper::Body>, Error = hyper::Error> + Send>
-where
-    T: hyper::client::connect::Connect + Sync + 'static,
-{
-    move |_| Box::new(serve(Arc::clone(&client)))
-}
-
 /// Returns a future that implements a response for an exporter request.
-fn serve<T>(
+pub async fn serve<T>(
     client: Arc<kasa::Client<T>>,
-) -> impl Future<Item = hyper::Response<hyper::Body>, Error = hyper::Error>
+) -> Result<hyper::Response<hyper::Body>, hyper::Error>
 where
-    T: hyper::client::connect::Connect + Sync + 'static,
+    T: hyper::client::connect::Connect + std::clone::Clone + std::marker::Send + Sync + 'static,
 {
-    client
-        .get_device_list()
-        .and_then(|devices| match devices.result {
-            Some(devices) => future::Either::A(
-                stream::iter_ok(devices.device_list.into_iter())
-                    .and_then(move |device| {
-                        client
-                            .emeter(&device.device_id)
-                            .map(|emeter| (device, emeter))
-                    })
-                    .collect(),
-            ),
-            None => future::Either::B(future::ok(vec![])),
-        })
-        .and_then(
-            |emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>| {
-                let encoder = prometheus::TextEncoder::new();
+    let devices = match client.get_device_list().await {
+        Ok(devices) => devices,
+        Err(e) => {
+            return {
+                eprintln!("error from kasa api: {}", e.to_string());
+                let mut http_response = hyper::Response::new(hyper::Body::empty());
+                *http_response.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
+                Ok(http_response)
+            }
+        }
+    };
 
-                let mut buffer = vec![];
-                encoder
-                    .encode(&registry(emeters).gather(), &mut buffer)
-                    .unwrap();
+    let emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)> = match devices.result {
+        Some(devices) => {
+            let mut results = Vec::new();
+            for device in devices.device_list {
+                let emeter = client.emeter(&device.device_id).await.unwrap();
+                results.push((device, emeter));
+            }
+            results
+        }
+        None => vec![],
+    };
 
-                let mut http_response = hyper::Response::new(hyper::Body::from(buffer));
+    let encoder = prometheus::TextEncoder::new();
 
-                let content_type = match encoder.format_type().parse() {
-                    Ok(content_type) => content_type,
-                    Err(e) => {
-                        return {
-                            eprintln!("error formatting content type: {}", e);
+    let mut buffer = vec![];
+    encoder
+        .encode(&registry(emeters).gather(), &mut buffer)
+        .unwrap();
 
-                            let mut http_response = hyper::Response::new(hyper::Body::empty());
-                            *http_response.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
+    let mut http_response = hyper::Response::new(hyper::Body::from(buffer));
 
-                            Ok(http_response)
-                        };
-                    }
-                };
+    let content_type = match encoder.format_type().parse() {
+        Ok(content_type) => content_type,
+        Err(e) => {
+            return {
+                eprintln!("error formatting content type: {}", e);
 
-                http_response
-                    .headers_mut()
-                    .insert(hyper::header::CONTENT_TYPE, content_type);
+                let mut http_response = hyper::Response::new(hyper::Body::empty());
+                *http_response.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
 
                 Ok(http_response)
-            },
-        )
-        .or_else(|e| {
-            eprintln!("error from kasa api: {}", e.display_chain().to_string());
-            let mut http_response = hyper::Response::new(hyper::Body::empty());
-            *http_response.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
-            Ok(http_response)
-        })
+            };
+        }
+    };
+
+    http_response
+        .headers_mut()
+        .insert(hyper::header::CONTENT_TYPE, content_type);
+
+    Ok(http_response)
 }
 
 /// Populates data for a metric from a given emeter measurement.

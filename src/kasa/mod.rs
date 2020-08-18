@@ -1,16 +1,8 @@
 //! # Kasa
 //! A library for interacting with [TP-Link Kasa](https://www.kasasmart.com/) API
 
-use std::error::Error as StdError;
 use std::fmt;
-
-use futures::future;
-use futures::future::Future;
-use futures::stream::Stream;
-
-use hyper;
-
-use uuid;
+use std::result::Result;
 
 pub mod error;
 
@@ -26,18 +18,16 @@ pub struct Client<T> {
 
 impl<T> Client<T>
 where
-    T: hyper::client::connect::Connect + Sync + 'static,
+    T: hyper::client::connect::Connect + std::clone::Clone + std::marker::Send + Sync + 'static,
 {
     /// Creates a new client with http client, credentials, and an app name (arbitrary string).
-    ///
-    /// This method returns a future and should be called in a [tokio](https://tokio.rs) runtime.
-    pub fn new(
+    pub async fn new(
         client: hyper::Client<T>,
         app: String,
         username: String,
         password: String,
-    ) -> impl Future<Item = Client<T>, Error = Error> {
-        Self::query(
+    ) -> Result<Client<T>, Error> {
+        let auth_response: Response<AuthResult> = Self::query(
             &client,
             None,
             Request {
@@ -45,30 +35,28 @@ where
                 params: AuthParams::new(app, username, password),
             },
         )
-        .and_then(|auth_response: Response<AuthResult>| {
-            if let Some(result) = auth_response.result {
-                future::ok(Self {
-                    client,
-                    token: result.token,
-                })
-            } else {
-                future::err(
-                    ErrorKind::EmptyAuthResponse(
-                        auth_response.error_code,
-                        auth_response.message.unwrap_or_else(|| "".to_string()),
-                    )
-                    .into(),
-                )
-            }
-        })
+        .await?;
+
+        if let Some(result) = auth_response.result {
+            Ok(Self {
+                client,
+                token: result.token,
+            })
+        } else {
+            Err(ErrorKind::EmptyAuthResponse(
+                auth_response.error_code,
+                auth_response.message.unwrap_or_else(|| "".to_string()),
+            )
+            .into())
+        }
     }
 
     /// Send a request to API with an optional token.
-    fn query<Q, R>(
+    async fn query<Q, R>(
         client: &hyper::Client<T>,
         token: Option<&String>,
         request: Request<Q>,
-    ) -> impl Future<Item = Response<R>, Error = Error>
+    ) -> Result<Response<R>, Error>
     where
         Q: serde::ser::Serialize + std::fmt::Debug,
         R: serde::de::DeserializeOwned + std::fmt::Debug,
@@ -76,7 +64,7 @@ where
         let request_body = match serde_json::to_string(&request)
             .map_err(|e| Error::with_chain(e, ErrorKind::Serialization(format!("{:?}", request))))
         {
-            Err(e) => return future::Either::A(future::err(e)),
+            Err(e) => return Err(e),
             Ok(request_body) => request_body,
         };
 
@@ -88,7 +76,7 @@ where
         }
 
         let request_uri = match uri.parse().map_err(From::from) {
-            Err(e) => return future::Either::A(future::err(e)),
+            Err(e) => return Err(e),
             Ok(request_uri) => request_uri,
         };
 
@@ -104,86 +92,86 @@ where
             println!("> request:\n{:#?}", request);
         }
 
-        future::Either::B(
-            client
-                .request(http_request)
-                .from_err::<Error>()
-                .and_then(|http_response| http_response.into_body().concat2().from_err())
-                .and_then(|body| {
-                    let body_vec = body.to_vec();
-                    serde_json::from_slice(&body_vec).map_err(|e| {
-                        Error::with_chain(
-                            e,
-                            ErrorKind::Serialization(
-                                String::from_utf8(body_vec)
-                                    .unwrap_or_else(|e| e.description().to_string()),
-                            ),
-                        )
-                    })
-                })
-                .map(|resp| {
-                    if cfg!(feature = "kasa_debug") {
-                        println!("< response:\n{:#?}", resp);
-                    }
-                    resp
-                }),
-        )
+        let mut http_response = client.request(http_request).await?;
+
+        let body = hyper::body::to_bytes(http_response.body_mut()).await?;
+
+        let body_vec = body.to_vec();
+
+        let resp = serde_json::from_slice(&body_vec).map_err(|e| {
+            Error::with_chain(
+                e,
+                ErrorKind::Serialization(
+                    String::from_utf8(body_vec).unwrap_or_else(|e| e.to_string()),
+                ),
+            )
+        });
+
+        if cfg!(feature = "kasa_debug") {
+            println!("< response:\n{:#?}", resp);
+        }
+
+        resp
     }
 
     /// Sends an authenticated request with a token provided by auth request.
-    fn token_query<Q, R>(&self, req: Request<Q>) -> impl Future<Item = Response<R>, Error = Error>
+    async fn token_query<Q, R>(&self, req: Request<Q>) -> Result<Response<R>, Error>
     where
         Q: serde::ser::Serialize + std::fmt::Debug,
         R: serde::de::DeserializeOwned + std::fmt::Debug,
     {
-        Self::query(&self.client, Some(&self.token), req)
+        Self::query(&self.client, Some(&self.token), req).await
     }
 
     /// Sends a request directly to device via API.
-    fn passthrough_query<R>(
+    async fn passthrough_query<R>(
         &self,
         device_id: &str,
         req: &PassthroughParamsData,
-    ) -> impl Future<Item = Response<R>, Error = Error>
+    ) -> Result<Response<R>, Error>
     where
         R: serde::de::DeserializeOwned + std::fmt::Debug,
     {
-        match PassthroughParams::new(device_id.to_owned(), req) {
-            Ok(params) => future::Either::A(self.token_query(Request {
-                method: "passthrough".to_string(),
-                params,
-            })),
-            Err(e) => future::Either::B(future::err(e.chain_err(|| ErrorKind::PassthtoughParams))),
-        }
+        let params = PassthroughParams::new(device_id.to_owned(), req)
+            .chain_err(|| ErrorKind::PassthtoughParams)?;
+
+        self.token_query(Request {
+            method: "passthrough".to_string(),
+            params,
+        })
+        .await
     }
 
     /// Returns list of devices available to the client.
-    pub fn get_device_list(&self) -> impl Future<Item = Response<DeviceListResult>, Error = Error> {
+    pub async fn get_device_list(&self) -> Result<Response<DeviceListResult>, Error> {
         self.token_query(Request {
             method: "getDeviceList".to_string(),
             params: DeviceListParams::new(),
         })
+        .await
     }
 
     /// Returns emeter measurements from a supplied device.
-    pub fn emeter(&self, device_id: &str) -> impl Future<Item = EmeterResult, Error = Error> {
-        self.passthrough_query(
-            device_id,
-            &PassthroughParamsData::new().add_emeter(EMeterParams::new().add_realtime()),
-        )
-        .and_then(
-            |response: Response<PassthroughResult>| match response.result {
-                Some(result) => match result.unpack() {
-                    Ok(emeter) => future::ok(emeter),
-                    Err(e) => future::err(e),
-                },
-                None => future::err(ErrorKind::EmptyPassthroughResponse.into()),
+    pub async fn emeter(&self, device_id: &str) -> Result<EmeterResult, Error> {
+        let response: Response<PassthroughResult> = self
+            .passthrough_query(
+                device_id,
+                &PassthroughParamsData::new().add_emeter(EMeterParams::new().add_realtime()),
+            )
+            .await?;
+
+        let w: EmeterResultWrapper = match response.result {
+            Some(result) => match result.unpack() {
+                Ok(emeter) => emeter,
+                Err(e) => return Err(e),
             },
-        )
-        .and_then(|w: EmeterResultWrapper| match w.emeter {
-            Some(emeter) => future::ok(emeter),
-            None => future::err(ErrorKind::EmptyEmeterResponse.into()),
-        })
+            None => return Err(ErrorKind::EmptyPassthroughResponse.into()),
+        };
+
+        match w.emeter {
+            Some(emeter) => Ok(emeter),
+            None => Err(ErrorKind::EmptyEmeterResponse.into()),
+        }
     }
 }
 
@@ -298,7 +286,7 @@ struct PassthroughParams {
 
 impl PassthroughParams {
     /// Creates empty passthrough parameters.
-    fn new<T: serde::ser::Serialize>(device_id: String, req: &T) -> Result<Self> {
+    fn new<T: serde::ser::Serialize>(device_id: String, req: &T) -> serde_json::Result<Self> {
         let request_data = serde_json::to_string(req)?;
 
         Ok(Self {
@@ -317,7 +305,7 @@ pub struct PassthroughResult {
 
 impl PassthroughResult {
     /// Unpacks double-encoded passthrough result.
-    fn unpack<T>(&self) -> Result<T>
+    fn unpack<T>(&self) -> Result<T, Error>
     where
         T: serde::de::DeserializeOwned,
     {
