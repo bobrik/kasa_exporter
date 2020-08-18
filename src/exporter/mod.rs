@@ -98,10 +98,15 @@ fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> promet
         "Power reading from device",
         &["device_alias", &"device_id"],
     );
+    let energy = gauge_vec(
+        "device_electric_energy_joules_total",
+        "Total energy consumed",
+        &["device_alias", &"device_id"],
+    );
 
     let registry = prometheus::Registry::new();
 
-    let collectors = vec![&voltage, &current, &power];
+    let collectors = vec![&voltage, &current, &power, &energy];
 
     for metric in collectors {
         registry.register(Box::new(metric.clone())).unwrap();
@@ -122,6 +127,7 @@ fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> promet
             voltage => realtime.voltage,
             current => realtime.current,
             power   => realtime.power,
+            energy  => realtime.total,
         };
     }
 
