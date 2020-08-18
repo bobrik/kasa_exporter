@@ -156,7 +156,7 @@ where
         let response: Response<PassthroughResult> = self
             .passthrough_query(
                 device_id,
-                &PassthroughParamsData::new().add_emeter(EMeterParams::new().add_realtime()),
+                &PassthroughParamsData::new().add_emeter(EmeterParams::new().add_realtime()),
             )
             .await?;
 
@@ -319,7 +319,7 @@ impl PassthroughResult {
 #[derive(Debug, serde_derive::Serialize)]
 struct PassthroughParamsData {
     #[serde(skip_serializing_if = "Option::is_none")]
-    emeter: Option<EMeterParams>,
+    emeter: Option<EmeterParams>,
 }
 
 impl PassthroughParamsData {
@@ -329,7 +329,7 @@ impl PassthroughParamsData {
     }
 
     /// Adds query for emeter data.
-    fn add_emeter(mut self, emeter: EMeterParams) -> Self {
+    fn add_emeter(mut self, emeter: EmeterParams) -> Self {
         self.emeter = Some(emeter);
         self
     }
@@ -337,12 +337,12 @@ impl PassthroughParamsData {
 
 /// Parameters for emeter requests.
 #[derive(Debug, serde_derive::Serialize)]
-struct EMeterParams {
+struct EmeterParams {
     #[serde(skip_serializing_if = "Option::is_none")]
-    get_realtime: Option<EMeterGetRealtimeParams>,
+    get_realtime: Option<EmeterGetRealtimeParams>,
 }
 
-impl EMeterParams {
+impl EmeterParams {
     /// Creates empty emeter parameters.
     fn new() -> Self {
         Self { get_realtime: None }
@@ -350,14 +350,14 @@ impl EMeterParams {
 
     /// Adds query for realtime data.
     fn add_realtime(mut self) -> Self {
-        self.get_realtime = Some(EMeterGetRealtimeParams {});
+        self.get_realtime = Some(EmeterGetRealtimeParams {});
         self
     }
 }
 
 /// Parameters for realtime emeter data.
 #[derive(Debug, serde_derive::Serialize)]
-struct EMeterGetRealtimeParams {}
+struct EmeterGetRealtimeParams {}
 
 /// A wrapper for emeter results.
 #[derive(Debug, serde_derive::Deserialize)]
