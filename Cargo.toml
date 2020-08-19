@@ -20,6 +20,7 @@ hyper-tls = { version = "0.4", default-features = false }
 serde = { version = "1.0", default-features = false }
 serde_json = { version = "1.0", default-features = false }
 serde_derive = { version = "1.0", default-features = false }
-error-chain = { version = "0.12", default-features = false }
+thiserror = { version = "1.0", default-features = false }
+anyhow = { version = "1.0", default-features = false, features = ["std"] }
 prometheus = { version = "0.9", default-features = false }
 uuid = { version = "0.7", default-features = false, features = ["v4"] }

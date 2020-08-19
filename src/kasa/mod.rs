@@ -2,12 +2,13 @@
 //! A library for interacting with [TP-Link Kasa](https://www.kasasmart.com/) API
 
 use std::fmt;
-use std::result::Result;
 use std::sync;
 
 pub mod error;
 
-use crate::kasa::error::*;
+use crate::kasa::error::KasaError;
+
+use anyhow::Result;
 
 const ENDPOINT: &str = "https://wap.tplinkcloud.com/";
 
@@ -30,7 +31,7 @@ where
         app: String,
         username: String,
         password: String,
-    ) -> Result<Client<T>, Error> {
+    ) -> Result<Client<T>> {
         let token = Self::auth(&client, app.clone(), username.clone(), password.clone()).await?;
 
         Ok(Self {
@@ -47,7 +48,7 @@ where
         app: String,
         username: String,
         password: String,
-    ) -> Result<String, Error> {
+    ) -> Result<String> {
         let auth_response: Response<AuthResult> = Self::query(
             &client,
             None,
@@ -61,10 +62,10 @@ where
         if let Some(result) = auth_response.result {
             Ok(result.token)
         } else {
-            Err(ErrorKind::EmptyAuthResponse(
-                auth_response.error_code,
-                auth_response.message.unwrap_or_else(|| "".to_string()),
-            )
+            Err(KasaError::EmptyAuthResponse {
+                code: auth_response.error_code,
+                message: auth_response.message.unwrap_or_else(|| "".to_string()),
+            }
             .into())
         }
     }
@@ -74,17 +75,16 @@ where
         client: &hyper::Client<T>,
         token: Option<&String>,
         request: &Request<Q>,
-    ) -> Result<Response<R>, Error>
+    ) -> Result<Response<R>>
     where
         Q: serde::ser::Serialize + std::fmt::Debug,
         R: serde::de::DeserializeOwned + std::fmt::Debug,
     {
-        let request_body = match serde_json::to_string(&request)
-            .map_err(|e| Error::with_chain(e, ErrorKind::Serialization(format!("{:?}", request))))
-        {
-            Err(e) => return Err(e),
-            Ok(request_body) => request_body,
-        };
+        let request_body =
+            serde_json::to_string(&request).map_err(|e| KasaError::Serialization {
+                source: e.into(),
+                debug: format!("{:?}", request),
+            })?;
 
         let mut http_request = hyper::Request::new(hyper::Body::from(request_body));
 
@@ -93,10 +93,7 @@ where
             uri = uri + &"?token=".to_string() + &value
         }
 
-        let request_uri = match uri.parse().map_err(From::from) {
-            Err(e) => return Err(e),
-            Ok(request_uri) => request_uri,
-        };
+        let request_uri = uri.parse()?;
 
         *http_request.method_mut() = hyper::Method::POST;
         *http_request.uri_mut() = request_uri;
@@ -117,12 +114,11 @@ where
         let body_vec = body.to_vec();
 
         let resp = serde_json::from_slice(&body_vec).map_err(|e| {
-            Error::with_chain(
-                e,
-                ErrorKind::Serialization(
-                    String::from_utf8(body_vec).unwrap_or_else(|e| e.to_string()),
-                ),
-            )
+            KasaError::Serialization {
+                source: e.into(),
+                debug: String::from_utf8(body_vec).unwrap_or_else(|e| e.to_string()),
+            }
+            .into()
         });
 
         if cfg!(feature = "kasa_debug") {
@@ -133,7 +129,7 @@ where
     }
 
     /// Sends an authenticated request with a token provided by auth request.
-    async fn token_query<Q, R>(&self, req: &Request<Q>) -> Result<Response<R>, Error>
+    async fn token_query<Q, R>(&self, req: &Request<Q>) -> Result<Response<R>>
     where
         Q: serde::ser::Serialize + std::fmt::Debug,
         R: serde::de::DeserializeOwned + std::fmt::Debug,
@@ -163,12 +159,12 @@ where
         &self,
         device_id: &str,
         req: &PassthroughParamsData,
-    ) -> Result<Response<R>, Error>
+    ) -> Result<Response<R>>
     where
         R: serde::de::DeserializeOwned + std::fmt::Debug,
     {
         let params = PassthroughParams::new(device_id.to_owned(), req)
-            .chain_err(|| ErrorKind::PassthtoughParams)?;
+            .map_err(|e| KasaError::PassthtoughParams { source: e.into() })?;
 
         self.token_query(&Request {
             method: "passthrough".to_string(),
@@ -178,7 +174,7 @@ where
     }
 
     /// Returns list of devices available to the client.
-    pub async fn get_device_list(&self) -> Result<Response<DeviceListResult>, Error> {
+    pub async fn get_device_list(&self) -> Result<Response<DeviceListResult>> {
         self.token_query(&Request {
             method: "getDeviceList".to_string(),
             params: DeviceListParams::new(),
@@ -187,26 +183,17 @@ where
     }
 
     /// Returns emeter measurements from a supplied device.
-    pub async fn emeter(&self, device_id: &str) -> Result<EmeterResult, Error> {
-        let response: Response<PassthroughResult> = self
-            .passthrough_query(
-                device_id,
-                &PassthroughParamsData::new().add_emeter(EmeterParams::new().add_realtime()),
-            )
-            .await?;
-
-        let w: EmeterResultWrapper = match response.result {
-            Some(result) => match result.unpack() {
-                Ok(emeter) => emeter,
-                Err(e) => return Err(e),
-            },
-            None => return Err(ErrorKind::EmptyPassthroughResponse.into()),
-        };
-
-        match w.emeter {
-            Some(emeter) => Ok(emeter),
-            None => Err(ErrorKind::EmptyEmeterResponse.into()),
-        }
+    pub async fn emeter(&self, device_id: &str) -> Result<EmeterResult> {
+        self.passthrough_query::<PassthroughResult>(
+            device_id,
+            &PassthroughParamsData::new().add_emeter(EmeterParams::new().add_realtime()),
+        )
+        .await?
+        .result
+        .ok_or(KasaError::EmptyPassthroughResponse {})?
+        .unpack::<EmeterResultWrapper>()?
+        .emeter
+        .ok_or(KasaError::EmptyEmeterResponse {}.into())
     }
 }
 
@@ -340,12 +327,16 @@ pub struct PassthroughResult {
 
 impl PassthroughResult {
     /// Unpacks double-encoded passthrough result.
-    fn unpack<T>(&self) -> Result<T, Error>
+    fn unpack<T>(&self) -> Result<T>
     where
         T: serde::de::DeserializeOwned,
     {
         serde_json::from_str(&self.response_data).map_err(|e| {
-            Error::with_chain(e, ErrorKind::Deserialization(self.response_data.clone()))
+            KasaError::Serialization {
+                source: e.into(),
+                debug: self.response_data.clone(),
+            }
+            .into()
         })
     }
 }
