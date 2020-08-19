@@ -1,18 +1,15 @@
 //! # Exporter
 //! Prometheus exporter service for Kasa to be used in Hyper Server.
 
-use std::result::Result;
-
 use std::sync::Arc;
 
+use anyhow::Result;
 use prometheus::Encoder;
 
 use super::kasa;
 
 /// Returns a future that implements a response for an exporter request.
-pub async fn serve<T>(
-    client: Arc<kasa::Client<T>>,
-) -> Result<hyper::Response<hyper::Body>, hyper::Error>
+pub async fn serve<T>(client: Arc<kasa::Client<T>>) -> Result<hyper::Response<hyper::Body>>
 where
     T: hyper::client::connect::Connect + std::clone::Clone + std::marker::Send + Sync + 'static,
 {
@@ -29,21 +26,28 @@ where
     };
 
     let emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)> = match devices.result {
-        Some(devices) => {
-            let mut results = Vec::new();
-            for device in devices.device_list {
-                match client.emeter(&device.device_id).await {
-                    Ok(emeter) => results.push((device, emeter)),
-                    Err(e) => eprintln!(
-                        "error reading device {} ({}): {}",
-                        device.alias,
-                        device.device_id,
-                        e.to_string()
-                    ),
-                };
+        Some(devices) => futures::future::join_all(
+            devices
+                .device_list
+                .into_iter()
+                .map(move |device| device_emeter(Arc::clone(&client), device)),
+        )
+        .await
+        .into_iter()
+        .filter(|element| match &element.1 {
+            Ok(_) => true,
+            Err(e) => {
+                eprintln!(
+                    "error reading device {} ({}): {}",
+                    element.0.alias,
+                    element.0.device_id,
+                    e.to_string()
+                );
+                false
             }
-            results
-        }
+        })
+        .map(|element| (element.0, element.1.unwrap()))
+        .collect(),
         None => vec![],
     };
 
@@ -75,6 +79,17 @@ where
         .insert(hyper::header::CONTENT_TYPE, content_type);
 
     Ok(http_response)
+}
+
+async fn device_emeter<T>(
+    client: Arc<kasa::Client<T>>,
+    device: kasa::DeviceListEntry,
+) -> (kasa::DeviceListEntry, Result<kasa::EmeterResult>)
+where
+    T: hyper::client::connect::Connect + std::clone::Clone + std::marker::Send + Sync + 'static,
+{
+    let emeter = client.emeter(&device.device_id).await;
+    (device, emeter)
 }
 
 /// Populates data for a metric from a given emeter measurement.

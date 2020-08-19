@@ -13,6 +13,7 @@ kasa_debug = []
 
 [dependencies]
 clap = { version = "2", default-features = false }
+futures = { version = "0.3.5", default-features = false, features = ["std"] }
 tokio = { version = "0.2", default-features = false, features = ["macros"] }
 hyper = { version = "0.13", default-features = false }
 hyper-tls = { version = "0.4", default-features = false }
