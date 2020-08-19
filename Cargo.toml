@@ -14,7 +14,6 @@ kasa_debug = []
 [dependencies]
 clap = { version = "2", default-features = false }
 tokio = { version = "0.2", default-features = false, features = ["macros"] }
-http = { version = "0.2", default-features = false }
 hyper = { version = "0.13", default-features = false }
 hyper-tls = { version = "0.4", default-features = false }
 serde = { version = "1.0", default-features = false }
@@ -23,4 +22,4 @@ serde_derive = { version = "1.0", default-features = false }
 thiserror = { version = "1.0", default-features = false }
 anyhow = { version = "1.0", default-features = false, features = ["std"] }
 prometheus = { version = "0.9", default-features = false }
-uuid = { version = "0.7", default-features = false, features = ["v4"] }
+uuid = { version = "0.8", default-features = false, features = ["v4"] }
