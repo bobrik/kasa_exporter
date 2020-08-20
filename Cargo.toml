@@ -18,7 +18,7 @@ tokio = { version = "0.2", default-features = false, features = ["macros"] }
 hyper = { version = "0.13", default-features = false }
 hyper-tls = { version = "0.4", default-features = false }
 serde = { version = "1.0", default-features = false }
-serde_json = { version = "1.0", default-features = false }
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
 serde_derive = { version = "1.0", default-features = false }
 thiserror = { version = "1.0", default-features = false }
 anyhow = { version = "1.0", default-features = false, features = ["std"] }
