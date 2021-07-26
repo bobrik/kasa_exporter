@@ -5,7 +5,7 @@ use std::sync::Arc;
 mod exporter;
 mod kasa;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = clap::App::new(clap::crate_name!())
         .version(clap::crate_version!())
