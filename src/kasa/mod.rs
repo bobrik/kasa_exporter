@@ -190,7 +190,7 @@ where
         )
         .await?
         .result
-        .ok_or_else(|| KasaError::EmptyPassthroughResponse {})?
+        .ok_or(KasaError::EmptyPassthroughResponse {})?
         .unpack::<EmeterResultWrapper>()?
         .emeter
         .ok_or_else(|| KasaError::EmptyEmeterResponse {}.into())
