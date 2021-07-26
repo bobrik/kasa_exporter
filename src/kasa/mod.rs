@@ -164,7 +164,7 @@ where
         R: serde::de::DeserializeOwned + std::fmt::Debug,
     {
         let params = PassthroughParams::new(device_id.to_owned(), req)
-            .map_err(|e| KasaError::PassthtoughParams { source: e.into() })?;
+            .map_err(|e| KasaError::PassthroughParams { source: e.into() })?;
 
         self.token_query(&Request {
             method: "passthrough".to_string(),

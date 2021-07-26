@@ -10,7 +10,7 @@ pub enum KasaError {
         debug: String,
     },
     #[error("Passthrough param initialization error")]
-    PassthtoughParams { source: anyhow::Error },
+    PassthroughParams { source: anyhow::Error },
     #[error("Empty passthrough response")]
     EmptyPassthroughResponse {},
     #[error("Empty emeter response")]

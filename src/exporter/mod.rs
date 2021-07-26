@@ -112,7 +112,7 @@ fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> promet
     );
     let current = gauge_vec(
         "device_electric_current_amperes",
-        "Corrent reading from device",
+        "Current reading from device",
         &["device_alias", &"device_id"],
     );
     let power = gauge_vec(
