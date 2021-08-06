@@ -401,8 +401,16 @@ pub struct EmeterResult {
 #[derive(Debug, serde_derive::Deserialize)]
 pub struct EmeterGetRealtimeResult {
     pub error_code: Option<i32>,
+
+    // v1 hardware returns f64 values in base units
     pub current: Option<f64>,
     pub voltage: Option<f64>,
     pub power: Option<f64>,
     pub total: Option<f64>,
+
+    // v2 hardware returns u64 values in named units
+    pub voltage_mv: Option<u64>,
+    pub current_ma: Option<u64>,
+    pub power_mw: Option<u64>,
+    pub total_wh: Option<u64>,
 }
