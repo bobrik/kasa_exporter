@@ -108,22 +108,22 @@ fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> promet
     let voltage = gauge_vec(
         "device_electric_potential_volts",
         "Voltage reading from device",
-        &["device_alias", &"device_id"],
+        &["device_alias", "device_id"],
     );
     let current = gauge_vec(
         "device_electric_current_amperes",
         "Current reading from device",
-        &["device_alias", &"device_id"],
+        &["device_alias", "device_id"],
     );
     let power = gauge_vec(
         "device_electric_power_watts",
         "Power reading from device",
-        &["device_alias", &"device_id"],
+        &["device_alias", "device_id"],
     );
     let energy = gauge_vec(
         "device_electric_energy_joules_total",
         "Total energy consumed",
-        &["device_alias", &"device_id"],
+        &["device_alias", "device_id"],
     );
 
     let registry = prometheus::Registry::new();

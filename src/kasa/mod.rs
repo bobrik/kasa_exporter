@@ -50,7 +50,7 @@ where
         password: String,
     ) -> Result<String> {
         let auth_response: Response<AuthResult> = Self::query(
-            &client,
+            client,
             None,
             &Request {
                 method: "login".to_string(),
@@ -90,7 +90,7 @@ where
 
         let mut uri = ENDPOINT.to_string();
         if let Some(value) = token {
-            uri = uri + &"?token=".to_string() + &value
+            uri = uri + &"?token=".to_string() + value
         }
 
         let request_uri = uri.parse()?;
