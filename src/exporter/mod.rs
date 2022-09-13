@@ -17,7 +17,7 @@ where
         Ok(devices) => devices,
         Err(e) => {
             return {
-                eprintln!("error from kasa api: {}", e.to_string());
+                eprintln!("error from kasa api: {}", e);
                 let mut http_response = hyper::Response::new(hyper::Body::empty());
                 *http_response.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
                 Ok(http_response)
@@ -39,9 +39,7 @@ where
             Err(e) => {
                 eprintln!(
                     "error reading device {} ({}): {}",
-                    element.0.alias,
-                    element.0.device_id,
-                    e.to_string()
+                    element.0.alias, element.0.device_id, e
                 );
                 false
             }
