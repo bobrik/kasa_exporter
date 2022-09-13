@@ -146,10 +146,26 @@ fn registry(emeters: Vec<(kasa::DeviceListEntry, kasa::EmeterResult)>) -> promet
         };
 
         fill_metric! { labels = labels,
-            voltage => realtime.voltage,
-            current => realtime.current,
-            power   => realtime.power,
-            energy  => realtime.total.map(|kwh| kwh * 3600.0 * 1000.0),
+            voltage => if realtime.voltage.unwrap_or_default() > 0.0 {
+                realtime.voltage
+            } else {
+                realtime.voltage_mv.map(|mv| mv as f64 / 1000.0)
+            },
+            current => if realtime.current.unwrap_or_default() > 0.0 {
+                realtime.current
+            } else {
+                realtime.current_ma.map(|ma| ma as f64 / 1000.0)
+            },
+            power => if realtime.power.unwrap_or_default() > 0.0 {
+                realtime.power
+            } else {
+                realtime.power_mw.map(|w| w as f64 / 1000.0)
+            },
+            energy => if realtime.total.unwrap_or_default() > 0.0 {
+                realtime.total.map(|kwh| kwh * 3600.0 * 1000.0)
+            } else {
+                realtime.total_wh.map(|wh| wh as f64 * 3600.0)
+            },
         };
     }
 
