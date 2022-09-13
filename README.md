@@ -6,13 +6,19 @@ This is an experiment in learning [Rust](https://www.rust-lang.org/) and [tokio]
 
 ## Supported products
 
-### [Smart wifi plug (HS-110)](https://www.kasasmart.com/us/products/smart-plugs/kasa-smart-plug-energy-monitoring-hs110)
+There might be others that have the same API. The following ones have been tested.
 
-![HS-110](https://kasasmart.cdn.prismic.io/kasasmart/324e6a946178da38bd31dfaf6e8a2fa87b181959_hs110-product-image.png)
+### [Smart wifi plug (HS110)](https://www.kasasmart.com/us/products/smart-plugs/kasa-smart-plug-energy-monitoring-hs110)
+
+![HS110](https://images.prismic.io/kasasmart/324e6a946178da38bd31dfaf6e8a2fa87b181959_hs110-product-image.png?auto=compress,format)
+
+### [Smart wifi plug (KP115)](https://www.kasasmart.com/us/products/smart-plugs/kasa-smart-plug-slim-energy-monitoring-kp115)
+
+![KP115](https://images.prismic.io/kasasmart/01ca42d1-a4b0-42c6-a134-b1831477e5e7_KP115_Set-up+Images.png?auto=compress,format)
 
 #### Exported metrics
 
-All three as reported by API with `device_id` and `device_alias` labels: 
+All three as reported by API with `device_id` and `device_alias` labels:
 
 * `device_electric_current_amperes`
 * `device_electric_potential_volts`
@@ -25,7 +31,7 @@ All three as reported by API with `device_id` and `device_alias` labels:
 
 ```
 $ cargo build
-``` 
+```
 
 If you wish to see debug output with requests and responses to Kasa API,
 you can pass `--features kasa_debug` to `cargo build`:

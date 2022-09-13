@@ -90,7 +90,7 @@ where
 
         let mut uri = ENDPOINT.to_string();
         if let Some(value) = token {
-            uri = uri + &"?token=".to_string() + value
+            uri = uri + "?token=" + value
         }
 
         let request_uri = uri.parse()?;
@@ -250,11 +250,6 @@ pub struct Response<T> {
 /// An authentication response data.
 #[derive(Debug, serde_derive::Deserialize)]
 struct AuthResult {
-    #[serde(rename = "accountId")]
-    account_id: String,
-
-    email: String,
-
     token: String,
 }
 
