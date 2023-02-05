@@ -1,4 +1,20 @@
+use std::{net::UdpSocket, sync::atomic::AtomicU64, time::Duration};
+
+use axum::{
+    http::{HeaderMap, HeaderValue},
+    response::IntoResponse,
+    routing::get,
+    Router, Server,
+};
 use clap::Parser;
+use prometheus_client::{
+    encoding::{text::encode, EncodeLabelSet},
+    metrics::{counter::Counter, family::Family, gauge::Gauge},
+    registry::Registry,
+};
+use serde_derive::Deserialize;
+use serde_json::from_slice;
+use tplink_shome_protocol::{decrypt, encrypt};
 
 const BROADCAST_BIND_ADDR: &str = "0.0.0.0:0";
 const BROADCAST_SEND_ADDR: &str = "255.255.255.255:9999";
@@ -23,22 +39,22 @@ async fn main() {
         .parse()
         .expect("error parsing listen address");
 
-    let app = axum::routing::Router::new().route("/metrics", axum::routing::get(metrics));
+    let app = Router::new().route("/metrics", get(metrics));
 
-    axum::Server::bind(&addr)
+    Server::bind(&addr)
         .serve(app.into_make_service())
         .await
         .expect("error running server");
 }
 
-async fn metrics() -> impl axum::response::IntoResponse {
-    let socket = std::net::UdpSocket::bind(BROADCAST_BIND_ADDR).unwrap();
+async fn metrics() -> impl IntoResponse {
+    let socket = UdpSocket::bind(BROADCAST_BIND_ADDR).unwrap();
     socket
-        .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+        .set_read_timeout(Some(Duration::from_millis(500)))
         .unwrap();
     socket.set_broadcast(true).unwrap();
 
-    let msg = tplink_shome_protocol::encrypt(BROADCAST_MESSAGE);
+    let msg = encrypt(BROADCAST_MESSAGE);
 
     socket
         .send_to(&msg, BROADCAST_SEND_ADDR)
@@ -48,41 +64,36 @@ async fn metrics() -> impl axum::response::IntoResponse {
     let mut responses = vec![];
 
     while let Ok((n, _)) = socket.recv_from(&mut buf) {
-        responses.push(
-            serde_json::from_slice(&tplink_shome_protocol::decrypt(&buf[0..n])).expect("ugh"),
-        );
+        responses.push(from_slice(&decrypt(&buf[0..n])).expect("ugh"));
     }
 
     let registry = into_registry(responses);
 
     let mut buffer = String::new();
-    prometheus_client::encoding::text::encode(&mut buffer, &registry)
-        .expect("error encoding prometheus data");
+    encode(&mut buffer, &registry).expect("error encoding prometheus data");
 
-    let mut headers = axum::http::HeaderMap::new();
+    let mut headers = HeaderMap::new();
     headers.insert(
         "content-type",
-        axum::http::HeaderValue::from_static(
-            "application/openmetrics-text; version=1.0.0; charset=utf-8",
-        ),
+        HeaderValue::from_static("application/openmetrics-text; version=1.0.0; charset=utf-8"),
     );
 
     (headers, buffer)
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct MetricLabels {
     device_alias: String,
     device_id: String,
 }
 
-fn into_registry(responses: Vec<BroadcastResponse>) -> prometheus_client::registry::Registry {
-    let mut registry = prometheus_client::registry::Registry::default();
+type GaugeMetric = Family<MetricLabels, Gauge<f64, AtomicU64>>;
+type CounterMetric = Family<MetricLabels, Counter<f64, AtomicU64>>;
 
-    let voltage = prometheus_client::metrics::family::Family::<
-        MetricLabels,
-        prometheus_client::metrics::gauge::Gauge<f64, std::sync::atomic::AtomicU64>,
-    >::default();
+fn into_registry(responses: Vec<BroadcastResponse>) -> Registry {
+    let mut registry = Registry::default();
+
+    let voltage = GaugeMetric::default();
 
     registry.register(
         "device_electric_potential_volts",
@@ -90,10 +101,7 @@ fn into_registry(responses: Vec<BroadcastResponse>) -> prometheus_client::regist
         voltage.clone(),
     );
 
-    let current = prometheus_client::metrics::family::Family::<
-        MetricLabels,
-        prometheus_client::metrics::gauge::Gauge<f64, std::sync::atomic::AtomicU64>,
-    >::default();
+    let current = GaugeMetric::default();
 
     registry.register(
         "device_electric_current_amperes",
@@ -101,10 +109,7 @@ fn into_registry(responses: Vec<BroadcastResponse>) -> prometheus_client::regist
         current.clone(),
     );
 
-    let power = prometheus_client::metrics::family::Family::<
-        MetricLabels,
-        prometheus_client::metrics::gauge::Gauge<f64, std::sync::atomic::AtomicU64>,
-    >::default();
+    let power = GaugeMetric::default();
 
     registry.register(
         "device_electric_power_watts",
@@ -112,10 +117,7 @@ fn into_registry(responses: Vec<BroadcastResponse>) -> prometheus_client::regist
         power.clone(),
     );
 
-    let energy = prometheus_client::metrics::family::Family::<
-        MetricLabels,
-        prometheus_client::metrics::counter::Counter<f64, std::sync::atomic::AtomicU64>,
-    >::default();
+    let energy = CounterMetric::default();
 
     registry.register(
         "device_electric_energy_joules_total",
@@ -170,30 +172,30 @@ fn into_registry(responses: Vec<BroadcastResponse>) -> prometheus_client::regist
     registry
 }
 
-#[derive(serde_derive::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 struct BroadcastResponse {
     system: SystemResponse,
     emeter: EmeterResponse,
 }
 
-#[derive(serde_derive::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 struct SystemResponse {
     get_sysinfo: GetSysinfoResponse,
 }
 
-#[derive(serde_derive::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 struct GetSysinfoResponse {
     alias: String,
     #[serde(rename = "deviceId")]
     device_id: String,
 }
 
-#[derive(serde_derive::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 struct EmeterResponse {
     get_realtime: Option<GetRealtimeResponse>,
 }
 
-#[derive(serde_derive::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 struct GetRealtimeResponse {
     // v1 hardware returns f64 values in base units
     current: Option<f64>,
