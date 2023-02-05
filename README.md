@@ -2,8 +2,7 @@
 
 [Prometheus](https://prometheus.io/) exporter for [TP-Link Kasa](https://www.kasasmart.com/us) smart home products.
 
-This is an experiment in learning [Rust](https://www.rust-lang.org/) and [tokio](https://tokio.rs/) library.
-
+The metrics are exported for all devices find on a local network.
 ## Supported products
 
 There might be others that have the same API. The following ones have been tested.
@@ -23,21 +22,14 @@ All three as reported by API with `device_id` and `device_alias` labels:
 * `device_electric_current_amperes`
 * `device_electric_potential_volts`
 * `device_electric_power_watts`
-
+* `device_electric_energy_joules_total`
 
 ## Building
 
 [Install Rust](https://www.rust-lang.org/tools/install), then from cloned repo:
 
 ```
-$ cargo build
-```
-
-If you wish to see debug output with requests and responses to Kasa API,
-you can pass `--features kasa_debug` to `cargo build`:
-
-```
-$ cargo build --features kasa_debug
+$ cargo build --release
 ```
 
 ## Usage
@@ -45,23 +37,18 @@ $ cargo build --features kasa_debug
 After [Building](#Building), run the command to get help:
 
 ```
-$ ./target/debug/kasa_exporter --help
-kasa_exporter 0.1.0
-Ivan Babrou <hello@ivan.computer>
+$ ./target/release/kasa_exporter --help
+Prometheus exporter for TP-Link kasa devices
 
+Usage: kasa_exporter [OPTIONS]
 
-USAGE:
-    kasa_exporter [OPTIONS] --kasa.password <kasa.password> --kasa.username <kasa.username>
-
-FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
-
-OPTIONS:
-        --kasa.password <kasa.password>              Password to log into Kasa service
-        --kasa.username <kasa.username>              Username to log into Kasa service
-        --web.listen-address <web.listen-address>
-            Address on which to expose metrics and web interface [default: [::1]:12345]
+Options:
+      --web.listen-address <LISTEN_ADDRESS>
+          Address on which to expose metrics and web interface [default: [::1]:12345]
+  -h, --help
+          Print help
+  -V, --version
+          Print version
 ```
 
 Note that `web.listen-address` expects `<ip>:<port>`, e.g.:
