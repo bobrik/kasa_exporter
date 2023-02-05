@@ -1,4 +1,4 @@
-// use anyhow::Result;
+use clap::Parser;
 use prometheus::Encoder;
 
 const BROADCAST_BIND_ADDR: &str = "0.0.0.0:0";
@@ -7,31 +7,22 @@ const BROADCAST_SEND_ADDR: &str = "255.255.255.255:9999";
 const BROADCAST_MESSAGE: &[u8] =
     r#"{"system":{"get_sysinfo":{}},"emeter":{"get_realtime":{}}}"#.as_bytes();
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Address on which to expose metrics and web interface.
+    #[arg(long = "web.listen-address", default_value = "[::1]:12345")]
+    listen_address: String,
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let matches = clap::App::new(clap::crate_name!())
-        .version(clap::crate_version!())
-        .author(clap::crate_authors!())
-        .about(clap::crate_description!())
-        .arg(
-            clap::Arg::with_name("web.listen-address")
-                .help("Address on which to expose metrics and web interface")
-                .long("web.listen-address")
-                .validator(|v| {
-                    v.parse::<std::net::SocketAddr>()
-                        .map(|_| ())
-                        .map_err(|e| e.to_string())
-                })
-                .takes_value(true)
-                .default_value("[::1]:12345"),
-        )
-        .get_matches();
+    let args = Args::parse();
 
-    let addr = matches
-        .value_of("web.listen-address")
-        .unwrap()
+    let addr = args
+        .listen_address
         .parse()
-        .unwrap();
+        .expect("error parsing listen address");
 
     let service = hyper::service::make_service_fn(move |_| async move {
         Ok::<_, hyper::Error>(hyper::service::service_fn(|_| serve()))

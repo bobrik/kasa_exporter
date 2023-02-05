@@ -8,7 +8,7 @@ license = "MIT"
 edition = "2018"
 
 [dependencies]
-clap = { version = "2", default-features = false }
+clap = { version = "4", default-features = false, features = ["std", "derive", "color", "usage", "help"] }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1.9", default-features = false, features = ["macros", "rt"] }
 hyper = { version = "0.14", default-features = false, features = ["server", "client", "http1"] }
