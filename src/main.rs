@@ -22,11 +22,19 @@ const BROADCAST_SEND_ADDR: &str = "255.255.255.255:9999";
 const BROADCAST_MESSAGE: &[u8] =
     r#"{"system":{"get_sysinfo":{}},"emeter":{"get_realtime":{}}}"#.as_bytes();
 
+const BROADCAST_WAIT_TIME: Duration = Duration::from_millis(500);
+
+const BROADCAST_RESPONSE_BUFFER_SIZE: usize = 4096;
+
+const DEFAULT_PROMETHEUS_BIND_ADDR: &str = "[::1]:12345";
+
+const PROMETHEUS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Address on which to expose metrics and web interface.
-    #[arg(long = "web.listen-address", default_value = "[::1]:12345")]
+    #[arg(long = "web.listen-address", default_value = DEFAULT_PROMETHEUS_BIND_ADDR)]
     listen_address: String,
 }
 
@@ -49,9 +57,7 @@ async fn main() {
 
 async fn metrics() -> impl IntoResponse {
     let socket = UdpSocket::bind(BROADCAST_BIND_ADDR).unwrap();
-    socket
-        .set_read_timeout(Some(Duration::from_millis(500)))
-        .unwrap();
+    socket.set_read_timeout(Some(BROADCAST_WAIT_TIME)).unwrap();
     socket.set_broadcast(true).unwrap();
 
     let msg = encrypt(BROADCAST_MESSAGE);
@@ -60,7 +66,7 @@ async fn metrics() -> impl IntoResponse {
         .send_to(&msg, BROADCAST_SEND_ADDR)
         .expect("error broadcasting");
 
-    let mut buf = [0u8; 4096];
+    let mut buf = [0u8; BROADCAST_RESPONSE_BUFFER_SIZE];
     let mut responses = vec![];
 
     while let Ok((n, _)) = socket.recv_from(&mut buf) {
@@ -75,7 +81,7 @@ async fn metrics() -> impl IntoResponse {
     let mut headers = HeaderMap::new();
     headers.insert(
         "content-type",
-        HeaderValue::from_static("application/openmetrics-text; version=1.0.0; charset=utf-8"),
+        HeaderValue::from_static(PROMETHEUS_CONTENT_TYPE),
     );
 
     (headers, buffer)
