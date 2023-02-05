@@ -1,5 +1,4 @@
 use clap::Parser;
-use prometheus::Encoder;
 
 const BROADCAST_BIND_ADDR: &str = "0.0.0.0:0";
 const BROADCAST_SEND_ADDR: &str = "255.255.255.255:9999";
@@ -54,64 +53,75 @@ async fn metrics() -> impl axum::response::IntoResponse {
         );
     }
 
-    let encoder = prometheus::TextEncoder::new();
+    let registry = into_registry(responses);
 
-    let mut buffer = vec![];
-    encoder
-        .encode(&registry(responses).gather(), &mut buffer)
-        .unwrap();
+    let mut buffer = String::new();
+    prometheus_client::encoding::text::encode(&mut buffer, &registry)
+        .expect("error encoding prometheus data");
 
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(
         "content-type",
-        axum::http::HeaderValue::from_str(encoder.format_type())
-            .expect("error extracting content-type"),
+        axum::http::HeaderValue::from_static(
+            "application/openmetrics-text; version=1.0.0; charset=utf-8",
+        ),
     );
 
     (headers, buffer)
 }
 
-/// Populates data for a metric from a given emeter measurement.
-macro_rules! fill_metric {
-    ( labels = $labels:expr, $($metric:expr => $value:expr,)+ ) => {
-        $(
-            if let Some(value) = $value {
-                $metric.with($labels).set(value);
-            }
-        )+
-    }
+#[derive(Clone, Debug, Hash, PartialEq, Eq, prometheus_client::encoding::EncodeLabelSet)]
+struct MetricLabels {
+    device_alias: String,
+    device_id: String,
 }
 
-/// Creates a throw away registry to populate data for a request.
-fn registry(responses: Vec<BroadcastResponse>) -> prometheus::Registry {
-    let voltage = gauge_vec(
+fn into_registry(responses: Vec<BroadcastResponse>) -> prometheus_client::registry::Registry {
+    let mut registry = prometheus_client::registry::Registry::default();
+
+    let voltage = prometheus_client::metrics::family::Family::<
+        MetricLabels,
+        prometheus_client::metrics::gauge::Gauge<f64, std::sync::atomic::AtomicU64>,
+    >::default();
+
+    registry.register(
         "device_electric_potential_volts",
         "Voltage reading from device",
-        &["device_alias", "device_id"],
+        voltage.clone(),
     );
-    let current = gauge_vec(
+
+    let current = prometheus_client::metrics::family::Family::<
+        MetricLabels,
+        prometheus_client::metrics::gauge::Gauge<f64, std::sync::atomic::AtomicU64>,
+    >::default();
+
+    registry.register(
         "device_electric_current_amperes",
         "Current reading from device",
-        &["device_alias", "device_id"],
+        current.clone(),
     );
-    let power = gauge_vec(
+
+    let power = prometheus_client::metrics::family::Family::<
+        MetricLabels,
+        prometheus_client::metrics::gauge::Gauge<f64, std::sync::atomic::AtomicU64>,
+    >::default();
+
+    registry.register(
         "device_electric_power_watts",
         "Power reading from device",
-        &["device_alias", "device_id"],
+        power.clone(),
     );
-    let energy = gauge_vec(
+
+    let energy = prometheus_client::metrics::family::Family::<
+        MetricLabels,
+        prometheus_client::metrics::counter::Counter<f64, std::sync::atomic::AtomicU64>,
+    >::default();
+
+    registry.register(
         "device_electric_energy_joules_total",
-        "Total energy consumed",
-        &["device_alias", "device_id"],
+        "Voltage reading from device",
+        energy.clone(),
     );
-
-    let registry = prometheus::Registry::new();
-
-    let collectors = vec![&voltage, &current, &power, &energy];
-
-    for metric in collectors {
-        registry.register(Box::new(metric.clone())).unwrap();
-    }
 
     for response in responses {
         let realtime = match response.emeter.get_realtime {
@@ -119,41 +129,45 @@ fn registry(responses: Vec<BroadcastResponse>) -> prometheus::Registry {
             None => continue,
         };
 
-        let labels = &prometheus::labels! {
-            "device_alias" => response.system.get_sysinfo.alias.as_str(),
-            "device_id"    => response.system.get_sysinfo.device_id.as_str(),
+        let labels = MetricLabels {
+            device_alias: response.system.get_sysinfo.alias.clone(),
+            device_id: response.system.get_sysinfo.device_id.clone(),
         };
 
-        fill_metric! { labels = labels,
-            voltage => if realtime.voltage.unwrap_or_default() > 0.0 {
-                realtime.voltage
+        voltage
+            .get_or_create(&labels)
+            .set(if realtime.voltage.unwrap_or_default() > 0.0 {
+                realtime.voltage.unwrap()
             } else {
-                realtime.voltage_mv.map(|mv| mv as f64 / 1000.0)
-            },
-            current => if realtime.current.unwrap_or_default() > 0.0 {
-                realtime.current
+                realtime.voltage_mv.map(|mv| mv as f64 / 1000.0).unwrap()
+            });
+
+        current
+            .get_or_create(&labels)
+            .set(if realtime.current.unwrap_or_default() > 0.0 {
+                realtime.current.unwrap()
             } else {
-                realtime.current_ma.map(|ma| ma as f64 / 1000.0)
-            },
-            power => if realtime.power.unwrap_or_default() > 0.0 {
-                realtime.power
+                realtime.current_ma.map(|ma| ma as f64 / 1000.0).unwrap()
+            });
+
+        power
+            .get_or_create(&labels)
+            .set(if realtime.power.unwrap_or_default() > 0.0 {
+                realtime.power.unwrap()
             } else {
-                realtime.power_mw.map(|w| w as f64 / 1000.0)
-            },
-            energy => if realtime.total.unwrap_or_default() > 0.0 {
-                realtime.total.map(|kwh| kwh * 3600.0 * 1000.0)
+                realtime.power_mw.map(|w| w as f64 / 1000.0).unwrap()
+            });
+
+        energy
+            .get_or_create(&labels)
+            .inc_by(if realtime.total.unwrap_or_default() > 0.0 {
+                realtime.total.map(|kwh| kwh * 3600.0 * 1000.0).unwrap()
             } else {
-                realtime.total_wh.map(|wh| wh as f64 * 3600.0)
-            },
-        };
+                realtime.total_wh.map(|wh| wh as f64 * 3600.0).unwrap()
+            });
     }
 
     registry
-}
-
-/// Creates Gauge vector with given parameters.
-fn gauge_vec(name: &str, help: &str, labels: &[&str]) -> prometheus::GaugeVec {
-    prometheus::GaugeVec::new(prometheus::opts!(name, help), labels).unwrap()
 }
 
 #[derive(serde_derive::Deserialize, Debug)]
