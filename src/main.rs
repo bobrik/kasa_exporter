@@ -16,7 +16,7 @@ struct Args {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() {
     let args = Args::parse();
 
     let addr = args
@@ -24,16 +24,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()
         .expect("error parsing listen address");
 
-    let service = hyper::service::make_service_fn(move |_| async move {
-        Ok::<_, hyper::Error>(hyper::service::service_fn(|_| serve()))
-    });
+    let app = axum::routing::Router::new().route("/metrics", axum::routing::get(metrics));
 
-    hyper::Server::bind(&addr).serve(service).await?;
-
-    Ok(())
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .expect("error running server");
 }
 
-pub async fn serve() -> Result<hyper::Response<hyper::Body>, hyper::Error> {
+async fn metrics() -> impl axum::response::IntoResponse {
     let socket = std::net::UdpSocket::bind(BROADCAST_BIND_ADDR).unwrap();
     socket
         .set_read_timeout(Some(std::time::Duration::from_millis(500)))
@@ -62,27 +61,14 @@ pub async fn serve() -> Result<hyper::Response<hyper::Body>, hyper::Error> {
         .encode(&registry(responses).gather(), &mut buffer)
         .unwrap();
 
-    let mut http_response = hyper::Response::new(hyper::Body::from(buffer));
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        "content-type",
+        axum::http::HeaderValue::from_str(encoder.format_type())
+            .expect("error extracting content-type"),
+    );
 
-    let content_type = match encoder.format_type().parse() {
-        Ok(content_type) => content_type,
-        Err(e) => {
-            return {
-                eprintln!("error formatting content type: {e}");
-
-                let mut http_response = hyper::Response::new(hyper::Body::empty());
-                *http_response.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
-
-                Ok(http_response)
-            };
-        }
-    };
-
-    http_response
-        .headers_mut()
-        .insert(hyper::header::CONTENT_TYPE, content_type);
-
-    Ok(http_response)
+    (headers, buffer)
 }
 
 /// Populates data for a metric from a given emeter measurement.
