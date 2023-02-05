@@ -47,6 +47,8 @@ async fn main() {
         .parse()
         .expect("error parsing listen address");
 
+    eprintln!("listening on {}", args.listen_address);
+
     let app = Router::new().route("/metrics", get(metrics));
 
     Server::bind(&addr)
