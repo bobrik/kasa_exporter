@@ -1,6 +1,12 @@
-use std::{net::UdpSocket, sync::atomic::AtomicU64, time::Duration};
+use std::{
+    collections::HashMap,
+    net::{SocketAddr, UdpSocket},
+    sync::{atomic::AtomicU64, Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use axum::{
+    extract::State,
     http::{HeaderMap, HeaderValue},
     response::IntoResponse,
     routing::get,
@@ -13,7 +19,7 @@ use prometheus_client::{
     registry::Registry,
 };
 use serde_derive::Deserialize;
-use serde_json::from_slice;
+use serde_json::{from_slice, from_str};
 use tplink_shome_protocol::{decrypt, encrypt};
 
 const BROADCAST_BIND_ADDR: &str = "0.0.0.0:0";
@@ -29,6 +35,8 @@ const BROADCAST_RESPONSE_BUFFER_SIZE: usize = 4096;
 const DEFAULT_PROMETHEUS_BIND_ADDR: &str = "[::1]:12345";
 
 const PROMETHEUS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
+
+const FORGET_TIMEOUT: Duration = Duration::from_secs(60 * 30);
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -49,7 +57,9 @@ async fn main() {
 
     eprintln!("listening on {}", args.listen_address);
 
-    let app = Router::new().route("/metrics", get(metrics));
+    let app = Router::new()
+        .route("/metrics", get(metrics))
+        .with_state(AppState::default());
 
     Server::bind(&addr)
         .serve(app.into_make_service())
@@ -57,25 +67,42 @@ async fn main() {
         .expect("error running server");
 }
 
-async fn metrics() -> impl IntoResponse {
-    let socket = UdpSocket::bind(BROADCAST_BIND_ADDR).unwrap();
-    socket.set_read_timeout(Some(BROADCAST_WAIT_TIME)).unwrap();
-    socket.set_broadcast(true).unwrap();
+#[derive(Default, Clone)]
+struct AppState {
+    endpoints: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+}
 
-    let msg = encrypt(BROADCAST_MESSAGE);
+async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
+    let now = Instant::now();
 
-    socket
-        .send_to(&msg, BROADCAST_SEND_ADDR)
-        .expect("error broadcasting");
+    let mut broadcast_responses = broadcast();
 
-    let mut buf = [0u8; BROADCAST_RESPONSE_BUFFER_SIZE];
-    let mut responses = vec![];
+    let mut endpoints = state.endpoints.lock().expect("error locking endpoints");
 
-    while let Ok((n, _)) = socket.recv_from(&mut buf) {
-        responses.push(from_slice(&decrypt(&buf[0..n])).expect("ugh"));
+    let mut combined_responses = vec![];
+
+    let mut remove = vec![];
+
+    for (endpoint, last_seen) in endpoints.iter() {
+        if let Some(response) = broadcast_responses.remove(endpoint) {
+            combined_responses.push(response);
+        } else if let Some(response) = check_one(endpoint) {
+            combined_responses.push(response);
+        } else if now.duration_since(*last_seen) > FORGET_TIMEOUT {
+            remove.push(*endpoint);
+        }
     }
 
-    let registry = into_registry(responses);
+    for endpoint in remove {
+        endpoints.remove(&endpoint);
+    }
+
+    for (addr, response) in broadcast_responses {
+        endpoints.insert(addr, Instant::now());
+        combined_responses.push(response);
+    }
+
+    let registry = into_registry(combined_responses);
 
     let mut buffer = String::new();
     encode(&mut buffer, &registry).expect("error encoding prometheus data");
@@ -87,6 +114,36 @@ async fn metrics() -> impl IntoResponse {
     );
 
     (headers, buffer)
+}
+
+fn broadcast() -> HashMap<SocketAddr, BroadcastResponse> {
+    let socket = UdpSocket::bind(BROADCAST_BIND_ADDR).unwrap();
+    socket.set_read_timeout(Some(BROADCAST_WAIT_TIME)).unwrap();
+    socket.set_broadcast(true).unwrap();
+
+    let msg = encrypt(BROADCAST_MESSAGE);
+
+    socket
+        .send_to(&msg, BROADCAST_SEND_ADDR)
+        .expect("error broadcasting");
+
+    let mut buf = [0u8; BROADCAST_RESPONSE_BUFFER_SIZE];
+    let mut responses = HashMap::default();
+
+    while let Ok((n, addr)) = socket.recv_from(&mut buf) {
+        responses.insert(addr, from_slice(&decrypt(&buf[0..n])).expect("ugh"));
+    }
+
+    responses
+}
+
+fn check_one(endpoint: &SocketAddr) -> Option<BroadcastResponse> {
+    let stream = std::net::TcpStream::connect(endpoint).ok()?;
+    tplink_shome_protocol::send_message(&stream, &String::from_utf8_lossy(BROADCAST_MESSAGE))
+        .ok()?;
+    tplink_shome_protocol::receive_message(&stream)
+        .ok()
+        .map(|message| from_str(&message).expect("ugh"))
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
