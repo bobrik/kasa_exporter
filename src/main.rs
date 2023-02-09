@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    net::{SocketAddr, UdpSocket},
+    io::{Error, ErrorKind, Result},
+    net::SocketAddr,
     sync::{atomic::AtomicU64, Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -13,24 +14,29 @@ use axum::{
     Router, Server,
 };
 use clap::Parser;
+use futures::future::join_all;
 use prometheus_client::{
     encoding::{text::encode, EncodeLabelSet},
     metrics::{counter::Counter, family::Family, gauge::Gauge},
     registry::Registry,
 };
 use serde_derive::Deserialize;
-use serde_json::{from_slice, from_str};
+use serde_json::from_slice;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UdpSocket,
+};
+use tokio::{net::TcpStream, time::timeout};
 use tplink_shome_protocol::{decrypt, encrypt};
 
 const BROADCAST_BIND_ADDR: &str = "0.0.0.0:0";
 const BROADCAST_SEND_ADDR: &str = "255.255.255.255:9999";
 
-const BROADCAST_MESSAGE: &[u8] =
-    r#"{"system":{"get_sysinfo":{}},"emeter":{"get_realtime":{}}}"#.as_bytes();
-
-const BROADCAST_WAIT_TIME: Duration = Duration::from_millis(500);
-
 const BROADCAST_RESPONSE_BUFFER_SIZE: usize = 4096;
+
+const REQUEST: &[u8] = r#"{"system":{"get_sysinfo":{}},"emeter":{"get_realtime":{}}}"#.as_bytes();
+
+const RESPONSE_WAIT_TIME: Duration = Duration::from_millis(500);
 
 const DEFAULT_PROMETHEUS_BIND_ADDR: &str = "[::1]:12345";
 
@@ -75,34 +81,69 @@ struct AppState {
 async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
     let now = Instant::now();
 
-    let mut broadcast_responses = broadcast();
+    let mut responses = broadcast().await.unwrap_or_else(|e| {
+        eprintln!("error getting broadcast responses: {e}");
+        Default::default()
+    });
 
-    let mut endpoints = state.endpoints.lock().expect("error locking endpoints");
+    let mut combined = vec![];
 
-    let mut combined_responses = vec![];
+    let endpoints = state
+        .endpoints
+        .lock()
+        .expect("error locking endpoints")
+        .clone();
 
-    let mut remove = vec![];
+    let mut rechecks = vec![];
 
     for (endpoint, last_seen) in endpoints.iter() {
-        if let Some(response) = broadcast_responses.remove(endpoint) {
-            combined_responses.push(response);
-        } else if let Some(response) = check_one(endpoint) {
-            combined_responses.push(response);
-        } else if now.duration_since(*last_seen) > FORGET_TIMEOUT {
-            remove.push(*endpoint);
+        if let Some(response) = responses.remove(endpoint) {
+            combined.push(response);
+        } else {
+            rechecks.push(async move {
+                (
+                    endpoint,
+                    last_seen,
+                    match timeout(RESPONSE_WAIT_TIME, check_one(endpoint)).await {
+                        Ok(Ok(response)) => Some(response),
+                        Ok(Err(e)) => {
+                            eprintln!("error checking {endpoint}: {e}");
+                            None
+                        }
+                        Err(e) => {
+                            eprintln!("timed out error checking {endpoint}: {e}");
+                            None
+                        }
+                    },
+                )
+            });
         }
     }
 
+    let rechecks = join_all(rechecks).await;
+
+    let mut remove = vec![];
+
+    for (endpoint, last_seen, response) in rechecks {
+        if let Some(response) = response {
+            combined.push(response);
+        } else if now.duration_since(*last_seen) > FORGET_TIMEOUT {
+            remove.push(endpoint);
+        }
+    }
+
+    let mut endpoints = state.endpoints.lock().expect("error locking endpoints");
+
     for endpoint in remove {
-        endpoints.remove(&endpoint);
+        endpoints.remove(endpoint);
     }
 
-    for (addr, response) in broadcast_responses {
+    for (addr, response) in responses {
         endpoints.insert(addr, Instant::now());
-        combined_responses.push(response);
+        combined.push(response);
     }
 
-    let registry = into_registry(combined_responses);
+    let registry = into_registry(combined);
 
     let mut buffer = String::new();
     encode(&mut buffer, &registry).expect("error encoding prometheus data");
@@ -116,34 +157,43 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
     (headers, buffer)
 }
 
-fn broadcast() -> HashMap<SocketAddr, BroadcastResponse> {
-    let socket = UdpSocket::bind(BROADCAST_BIND_ADDR).unwrap();
-    socket.set_read_timeout(Some(BROADCAST_WAIT_TIME)).unwrap();
-    socket.set_broadcast(true).unwrap();
+async fn broadcast() -> Result<HashMap<SocketAddr, Response>> {
+    let socket = UdpSocket::bind(BROADCAST_BIND_ADDR).await?;
+    socket.set_broadcast(true)?;
 
-    let msg = encrypt(BROADCAST_MESSAGE);
-
-    socket
-        .send_to(&msg, BROADCAST_SEND_ADDR)
-        .expect("error broadcasting");
+    let buf = encrypt(REQUEST);
+    socket.send_to(&buf, BROADCAST_SEND_ADDR).await?;
 
     let mut buf = [0u8; BROADCAST_RESPONSE_BUFFER_SIZE];
     let mut responses = HashMap::default();
 
-    while let Ok((n, addr)) = socket.recv_from(&mut buf) {
-        responses.insert(addr, from_slice(&decrypt(&buf[0..n])).expect("ugh"));
+    while let Ok(Ok((n, addr))) = timeout(RESPONSE_WAIT_TIME, socket.recv_from(&mut buf)).await {
+        let response: Response =
+            from_slice(&decrypt(&buf[0..n])).map_err(|_| Error::from(ErrorKind::InvalidData))?;
+
+        if response.emeter.get_realtime.is_some() {
+            responses.insert(addr, response);
+        }
     }
 
-    responses
+    Ok(responses)
 }
 
-fn check_one(endpoint: &SocketAddr) -> Option<BroadcastResponse> {
-    let stream = std::net::TcpStream::connect(endpoint).ok()?;
-    tplink_shome_protocol::send_message(&stream, &String::from_utf8_lossy(BROADCAST_MESSAGE))
-        .ok()?;
-    tplink_shome_protocol::receive_message(&stream)
-        .ok()
-        .map(|message| from_str(&message).expect("ugh"))
+async fn check_one(endpoint: &SocketAddr) -> Result<Response> {
+    let mut stream = TcpStream::connect(endpoint).await?;
+
+    let buf = encrypt(REQUEST);
+    stream.write_all(&(buf.len() as u32).to_be_bytes()).await?;
+
+    stream.write_all(&buf).await?;
+
+    let mut buf = [0; 4];
+    stream.read_exact(&mut buf).await?;
+
+    let mut buf: Vec<u8> = vec![0; u32::from_be_bytes(buf) as usize];
+    stream.read_exact(&mut buf).await?;
+
+    from_slice(&decrypt(&buf)).map_err(|_| Error::from(ErrorKind::InvalidData))
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -155,7 +205,7 @@ struct MetricLabels {
 type GaugeMetric = Family<MetricLabels, Gauge<f64, AtomicU64>>;
 type CounterMetric = Family<MetricLabels, Counter<f64, AtomicU64>>;
 
-fn into_registry(responses: Vec<BroadcastResponse>) -> Registry {
+fn into_registry(responses: Vec<Response>) -> Registry {
     let mut registry = Registry::default();
 
     let voltage = GaugeMetric::default();
@@ -238,7 +288,7 @@ fn into_registry(responses: Vec<BroadcastResponse>) -> Registry {
 }
 
 #[derive(Deserialize, Debug)]
-struct BroadcastResponse {
+struct Response {
     system: SystemResponse,
     emeter: EmeterResponse,
 }
