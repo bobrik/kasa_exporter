@@ -128,6 +128,10 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         if let Some(response) = response {
             combined.push(response);
         } else if now.duration_since(*last_seen) > FORGET_TIMEOUT {
+            eprintln!(
+                "removed {endpoint} after not seeing it for {}s",
+                FORGET_TIMEOUT.as_secs()
+            );
             remove.push(endpoint);
         }
     }
@@ -138,8 +142,12 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         endpoints.remove(endpoint);
     }
 
-    for (addr, response) in responses {
-        endpoints.insert(addr, Instant::now());
+    for (endpoint, response) in responses {
+        eprintln!(
+            "discovered {} at {endpoint}",
+            response.system.get_sysinfo.alias
+        );
+        endpoints.insert(endpoint, Instant::now());
         combined.push(response);
     }
 
