@@ -1,12 +1,20 @@
-use std::{net::UdpSocket, sync::atomic::AtomicU64, time::Duration};
+use std::{
+    collections::HashMap,
+    io::{Error, ErrorKind, Result},
+    net::SocketAddr,
+    sync::{atomic::AtomicU64, Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use axum::{
+    extract::State,
     http::{HeaderMap, HeaderValue},
     response::IntoResponse,
     routing::get,
     Router, Server,
 };
 use clap::Parser;
+use futures::future::join_all;
 use prometheus_client::{
     encoding::{text::encode, EncodeLabelSet},
     metrics::{counter::Counter, family::Family, gauge::Gauge},
@@ -14,21 +22,27 @@ use prometheus_client::{
 };
 use serde_derive::Deserialize;
 use serde_json::from_slice;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UdpSocket,
+};
+use tokio::{net::TcpStream, time::timeout};
 use tplink_shome_protocol::{decrypt, encrypt};
 
 const BROADCAST_BIND_ADDR: &str = "0.0.0.0:0";
 const BROADCAST_SEND_ADDR: &str = "255.255.255.255:9999";
 
-const BROADCAST_MESSAGE: &[u8] =
-    r#"{"system":{"get_sysinfo":{}},"emeter":{"get_realtime":{}}}"#.as_bytes();
-
-const BROADCAST_WAIT_TIME: Duration = Duration::from_millis(500);
-
 const BROADCAST_RESPONSE_BUFFER_SIZE: usize = 4096;
+
+const REQUEST: &[u8] = r#"{"system":{"get_sysinfo":{}},"emeter":{"get_realtime":{}}}"#.as_bytes();
+
+const RESPONSE_WAIT_TIME: Duration = Duration::from_millis(500);
 
 const DEFAULT_PROMETHEUS_BIND_ADDR: &str = "[::1]:12345";
 
 const PROMETHEUS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
+
+const FORGET_TIMEOUT: Duration = Duration::from_secs(60 * 30);
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -49,7 +63,9 @@ async fn main() {
 
     eprintln!("listening on {}", args.listen_address);
 
-    let app = Router::new().route("/metrics", get(metrics));
+    let app = Router::new()
+        .route("/metrics", get(metrics))
+        .with_state(AppState::default());
 
     Server::bind(&addr)
         .serve(app.into_make_service())
@@ -57,25 +73,85 @@ async fn main() {
         .expect("error running server");
 }
 
-async fn metrics() -> impl IntoResponse {
-    let socket = UdpSocket::bind(BROADCAST_BIND_ADDR).unwrap();
-    socket.set_read_timeout(Some(BROADCAST_WAIT_TIME)).unwrap();
-    socket.set_broadcast(true).unwrap();
+#[derive(Default, Clone)]
+struct AppState {
+    endpoints: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+}
 
-    let msg = encrypt(BROADCAST_MESSAGE);
+async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
+    let now = Instant::now();
 
-    socket
-        .send_to(&msg, BROADCAST_SEND_ADDR)
-        .expect("error broadcasting");
+    let mut responses = broadcast().await.unwrap_or_else(|e| {
+        eprintln!("error getting broadcast responses: {e}");
+        Default::default()
+    });
 
-    let mut buf = [0u8; BROADCAST_RESPONSE_BUFFER_SIZE];
-    let mut responses = vec![];
+    let mut combined = vec![];
 
-    while let Ok((n, _)) = socket.recv_from(&mut buf) {
-        responses.push(from_slice(&decrypt(&buf[0..n])).expect("ugh"));
+    let endpoints = state
+        .endpoints
+        .lock()
+        .expect("error locking endpoints")
+        .clone();
+
+    let mut rechecks = vec![];
+
+    for (endpoint, last_seen) in endpoints.iter() {
+        if let Some(response) = responses.remove(endpoint) {
+            combined.push(response);
+        } else {
+            rechecks.push(async move {
+                (
+                    endpoint,
+                    last_seen,
+                    match timeout(RESPONSE_WAIT_TIME, check_one(endpoint)).await {
+                        Ok(Ok(response)) => Some(response),
+                        Ok(Err(e)) => {
+                            eprintln!("error checking {endpoint}: {e}");
+                            None
+                        }
+                        Err(e) => {
+                            eprintln!("timed out error checking {endpoint}: {e}");
+                            None
+                        }
+                    },
+                )
+            });
+        }
     }
 
-    let registry = into_registry(responses);
+    let rechecks = join_all(rechecks).await;
+
+    let mut remove = vec![];
+
+    for (endpoint, last_seen, response) in rechecks {
+        if let Some(response) = response {
+            combined.push(response);
+        } else if now.duration_since(*last_seen) > FORGET_TIMEOUT {
+            eprintln!(
+                "removed {endpoint} after not seeing it for {}s",
+                FORGET_TIMEOUT.as_secs()
+            );
+            remove.push(endpoint);
+        }
+    }
+
+    let mut endpoints = state.endpoints.lock().expect("error locking endpoints");
+
+    for endpoint in remove {
+        endpoints.remove(endpoint);
+    }
+
+    for (endpoint, response) in responses {
+        eprintln!(
+            "discovered {} at {endpoint}",
+            response.system.get_sysinfo.alias
+        );
+        endpoints.insert(endpoint, Instant::now());
+        combined.push(response);
+    }
+
+    let registry = into_registry(combined);
 
     let mut buffer = String::new();
     encode(&mut buffer, &registry).expect("error encoding prometheus data");
@@ -89,6 +165,45 @@ async fn metrics() -> impl IntoResponse {
     (headers, buffer)
 }
 
+async fn broadcast() -> Result<HashMap<SocketAddr, Response>> {
+    let socket = UdpSocket::bind(BROADCAST_BIND_ADDR).await?;
+    socket.set_broadcast(true)?;
+
+    let buf = encrypt(REQUEST);
+    socket.send_to(&buf, BROADCAST_SEND_ADDR).await?;
+
+    let mut buf = [0u8; BROADCAST_RESPONSE_BUFFER_SIZE];
+    let mut responses = HashMap::default();
+
+    while let Ok(Ok((n, addr))) = timeout(RESPONSE_WAIT_TIME, socket.recv_from(&mut buf)).await {
+        let response: Response =
+            from_slice(&decrypt(&buf[0..n])).map_err(|_| Error::from(ErrorKind::InvalidData))?;
+
+        if response.emeter.get_realtime.is_some() {
+            responses.insert(addr, response);
+        }
+    }
+
+    Ok(responses)
+}
+
+async fn check_one(endpoint: &SocketAddr) -> Result<Response> {
+    let mut stream = TcpStream::connect(endpoint).await?;
+
+    let buf = encrypt(REQUEST);
+    stream.write_all(&(buf.len() as u32).to_be_bytes()).await?;
+
+    stream.write_all(&buf).await?;
+
+    let mut buf = [0; 4];
+    stream.read_exact(&mut buf).await?;
+
+    let mut buf: Vec<u8> = vec![0; u32::from_be_bytes(buf) as usize];
+    stream.read_exact(&mut buf).await?;
+
+    from_slice(&decrypt(&buf)).map_err(|_| Error::from(ErrorKind::InvalidData))
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct MetricLabels {
     device_alias: String,
@@ -98,7 +213,7 @@ struct MetricLabels {
 type GaugeMetric = Family<MetricLabels, Gauge<f64, AtomicU64>>;
 type CounterMetric = Family<MetricLabels, Counter<f64, AtomicU64>>;
 
-fn into_registry(responses: Vec<BroadcastResponse>) -> Registry {
+fn into_registry(responses: Vec<Response>) -> Registry {
     let mut registry = Registry::default();
 
     let voltage = GaugeMetric::default();
@@ -181,7 +296,7 @@ fn into_registry(responses: Vec<BroadcastResponse>) -> Registry {
 }
 
 #[derive(Deserialize, Debug)]
-struct BroadcastResponse {
+struct Response {
     system: SystemResponse,
     emeter: EmeterResponse,
 }

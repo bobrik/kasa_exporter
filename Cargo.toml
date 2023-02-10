@@ -10,7 +10,8 @@ edition = "2018"
 [dependencies]
 clap = { version = "4", default-features = false, features = ["std", "derive", "color", "usage", "help"] }
 axum = { version = "0.6", default-features = false, features = ["http1", "tokio"] }
-tokio = { version = "1.25", default-features = false, features = ["macros", "rt"] }
+tokio = { version = "1.25", default-features = false, features = ["macros", "rt", "net", "io-util"] }
+futures = { version = "0.3", default-features = false }
 serde = { version = "1.0", default-features = false }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
 serde_derive = { version = "1.0", default-features = false }
