@@ -243,7 +243,7 @@ fn into_registry(responses: Vec<Response>) -> Registry {
     let energy = CounterMetric::default();
 
     registry.register(
-        "device_electric_energy_joules_total",
+        "device_electric_energy_joules",
         "Voltage reading from device",
         energy.clone(),
     );
