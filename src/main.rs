@@ -259,37 +259,10 @@ fn into_registry(responses: Vec<Response>) -> Registry {
             device_id: response.system.get_sysinfo.device_id.clone(),
         };
 
-        voltage
-            .get_or_create(&labels)
-            .set(if realtime.voltage.unwrap_or_default() > 0.0 {
-                realtime.voltage.unwrap()
-            } else {
-                realtime.voltage_mv.map(|mv| mv as f64 / 1000.0).unwrap()
-            });
-
-        current
-            .get_or_create(&labels)
-            .set(if realtime.current.unwrap_or_default() > 0.0 {
-                realtime.current.unwrap()
-            } else {
-                realtime.current_ma.map(|ma| ma as f64 / 1000.0).unwrap()
-            });
-
-        power
-            .get_or_create(&labels)
-            .set(if realtime.power.unwrap_or_default() > 0.0 {
-                realtime.power.unwrap()
-            } else {
-                realtime.power_mw.map(|w| w as f64 / 1000.0).unwrap()
-            });
-
-        energy
-            .get_or_create(&labels)
-            .inc_by(if realtime.total.unwrap_or_default() > 0.0 {
-                realtime.total.map(|kwh| kwh * 3600.0 * 1000.0).unwrap()
-            } else {
-                realtime.total_wh.map(|wh| wh as f64 * 3600.0).unwrap()
-            });
+        voltage.get_or_create(&labels).set(realtime.voltage());
+        current.get_or_create(&labels).set(realtime.current());
+        power.get_or_create(&labels).set(realtime.power());
+        energy.get_or_create(&labels).inc_by(realtime.energy());
     }
 
     registry
@@ -331,4 +304,28 @@ struct GetRealtimeResponse {
     current_ma: Option<u64>,
     power_mw: Option<u64>,
     total_wh: Option<u64>,
+}
+
+impl GetRealtimeResponse {
+    fn voltage(&self) -> f64 {
+        self.voltage
+            .unwrap_or_else(|| self.voltage_mv.unwrap_or_default() as f64 / 1000.0)
+    }
+
+    fn current(&self) -> f64 {
+        self.current
+            .unwrap_or_else(|| self.current_ma.unwrap_or_default() as f64 / 1000.0)
+    }
+
+    fn power(&self) -> f64 {
+        self.power
+            .unwrap_or_else(|| self.power_mw.unwrap_or_default() as f64 / 1000.0)
+    }
+
+    fn energy(&self) -> f64 {
+        self.total
+            .unwrap_or_else(|| self.total_wh.unwrap_or_default() as f64 / 1000.0)
+            * 1000.0
+            * 3600.0
+    }
 }
