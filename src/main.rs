@@ -11,7 +11,7 @@ use axum::{
     http::{HeaderMap, HeaderValue},
     response::IntoResponse,
     routing::get,
-    Router, Server,
+    Router,
 };
 use clap::Parser;
 use futures::future::join_all;
@@ -24,7 +24,7 @@ use serde_derive::Deserialize;
 use serde_json::from_slice;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::UdpSocket,
+    net::{TcpListener, UdpSocket},
 };
 use tokio::{net::TcpStream, time::timeout};
 use tplink_shome_protocol::{decrypt, encrypt};
@@ -56,19 +56,17 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
-    let addr = args
-        .listen_address
-        .parse()
-        .expect("error parsing listen address");
-
-    eprintln!("listening on {}", args.listen_address);
+    eprintln!("listening on {}", &args.listen_address);
 
     let app = Router::new()
         .route("/metrics", get(metrics))
         .with_state(AppState::default());
 
-    Server::bind(&addr)
-        .serve(app.into_make_service())
+    let listener = TcpListener::bind(&args.listen_address)
+        .await
+        .expect("error binding to the listen address");
+
+    axum::serve(listener, app)
         .await
         .expect("error running server");
 }

@@ -1,6 +1,6 @@
 [package]
 name = "kasa_exporter"
-version = "0.3.0"
+version = "0.4.0"
 description = "Prometheus exporter for TP-Link kasa devices"
 authors = ["Ivan Babrou <hello@ivan.computer>"]
 repository = "https://github.com/bobrik/kasa_exporter"
@@ -9,11 +9,11 @@ edition = "2018"
 
 [dependencies]
 clap = { version = "4", default-features = false, features = ["std", "derive", "color", "usage", "help"] }
-axum = { version = "0.6", default-features = false, features = ["http1", "tokio"] }
-tokio = { version = "1.25", default-features = false, features = ["macros", "rt", "net", "io-util"] }
+axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "net", "io-util"] }
 futures = { version = "0.3", default-features = false }
-serde = { version = "1.0", default-features = false }
-serde_json = { version = "1.0", default-features = false, features = ["std"] }
-serde_derive = { version = "1.0", default-features = false }
-prometheus-client = { version = "0.19", default-features = false }
+serde = { version = "1", default-features = false }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+serde_derive = { version = "1", default-features = false }
+prometheus-client = { version = "0.22", default-features = false }
 tplink-shome-protocol = { version = "0.1.1", default-features = false }
